@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+    color-scheme: light;
+  }
+
+  body {
+    background-color: #f8fafc;
+    color: #1e293b;
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+  }
+}
+
+/* Custom scrollbars for clean light UI */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Glassmorphic soft light card effects */
+.glass-card {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.05), 0 1px 3px rgba(15, 23, 42, 0.03);
+}
+
+.glass-card-subtle {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(241, 245, 249, 0.9);
+}
+
+.glass-card-active {
+  background: #ffffff;
+  border: 1px solid #c7d2fe;
+  box-shadow: 0 8px 30px -4px rgba(79, 70, 229, 0.12), 0 2px 6px rgba(79, 70, 229, 0.04);
+}
+
+/* Pulsing beacon animations */
+@keyframes soft-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.08); }
+}
+.animate-soft-pulse {
+  animation: soft-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes fast-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+.animate-fast-pulse {
+  animation: fast-pulse 0.8s ease-in-out infinite;
+}
