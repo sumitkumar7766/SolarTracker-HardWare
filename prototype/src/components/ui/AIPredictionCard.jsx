@@ -39,7 +39,7 @@ export const AIPredictionCard = () => {
               AI Predictive Tracking Engine
             </h2>
             <span className="text-[10px] font-bold text-purple-600 uppercase tracking-wide">
-              Simulated Hybrid Controller
+              Gradient Boosting ML Model (solar_tracker_model.pkl)
             </span>
           </div>
         </div>

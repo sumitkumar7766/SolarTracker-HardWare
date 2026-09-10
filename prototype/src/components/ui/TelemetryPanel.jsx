@@ -56,8 +56,8 @@ export const TelemetryPanel = () => {
           {/* Top-Left */}
           <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 hover:border-indigo-200 transition-colors">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-bold text-slate-700">LDR TL</span>
-              <span className="text-[9px] font-mono text-slate-400">GPIO 32</span>
+              <span className="text-[11px] font-bold text-slate-700">LDR TL (Top)</span>
+              <span className="text-[9px] font-mono text-slate-400">GPIO 34</span>
             </div>
             <div className="font-mono text-base font-extrabold text-slate-900">
               {ldr.tl}
@@ -73,7 +73,7 @@ export const TelemetryPanel = () => {
           {/* Top-Right */}
           <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 hover:border-indigo-200 transition-colors">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-bold text-slate-700">LDR TR</span>
+              <span className="text-[11px] font-bold text-slate-700">LDR TR (Right)</span>
               <span className="text-[9px] font-mono text-slate-400">GPIO 33</span>
             </div>
             <div className="font-mono text-base font-extrabold text-slate-900">
@@ -90,8 +90,8 @@ export const TelemetryPanel = () => {
           {/* Bottom-Left */}
           <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 hover:border-indigo-200 transition-colors">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-bold text-slate-700">LDR BL</span>
-              <span className="text-[9px] font-mono text-slate-400">GPIO 34</span>
+              <span className="text-[11px] font-bold text-slate-700">LDR BL (Left)</span>
+              <span className="text-[9px] font-mono text-slate-400">GPIO 32</span>
             </div>
             <div className="font-mono text-base font-extrabold text-slate-900">
               {ldr.bl}
@@ -107,7 +107,7 @@ export const TelemetryPanel = () => {
           {/* Bottom-Right */}
           <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 hover:border-indigo-200 transition-colors">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-bold text-slate-700">LDR BR</span>
+              <span className="text-[11px] font-bold text-slate-700">LDR BR (Bottom)</span>
               <span className="text-[9px] font-mono text-slate-400">GPIO 35</span>
             </div>
             <div className="font-mono text-base font-extrabold text-slate-900">

@@ -22,6 +22,8 @@ export const Header = ({ activeTab, setActiveTab }) => {
     resetSimulation,
     trackingMode,
     battery,
+    backendStatus,
+    esp32Connected,
   } = useSimulation();
 
   const [showNotification, setShowNotification] = useState(false);
@@ -78,10 +80,32 @@ export const Header = ({ activeTab, setActiveTab }) => {
 
           {/* Quick Simulation Actions & Status Badges */}
           <div className="flex items-center gap-2.5 sm:gap-3">
-            {/* System Online Badge */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200/80 text-xs font-semibold">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span className="hidden sm:inline">System Online</span>
+            {/* Live Connection Badge */}
+            <div
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold border ${
+                backendStatus === 'CONNECTED'
+                  ? esp32Connected
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200/80'
+                    : 'bg-amber-50 text-amber-800 border-amber-200/80'
+                  : 'bg-red-50 text-red-700 border-red-200/80'
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  backendStatus === 'CONNECTED'
+                    ? esp32Connected
+                      ? 'bg-emerald-500 animate-pulse'
+                      : 'bg-amber-500 animate-ping'
+                    : 'bg-red-500'
+                }`}
+              ></span>
+              <span className="hidden sm:inline font-mono">
+                {backendStatus === 'CONNECTED'
+                  ? esp32Connected
+                    ? 'ESP32 CONNECTED'
+                    : 'ESP32 WAITING'
+                  : 'BACKEND DISCONNECTED'}
+              </span>
             </div>
 
             {/* Quick Play/Pause/Reset Controls */}

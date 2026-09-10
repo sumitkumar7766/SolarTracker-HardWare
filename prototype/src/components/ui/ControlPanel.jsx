@@ -51,35 +51,41 @@ export const ControlPanel = () => {
     rpi5Status,
     esp32Status,
     bmsStatus,
+    systemStatusText,
+    stopReason,
   } = useSimulation();
 
   return (
     <div className="space-y-4">
       {/* 1. Main Simulation Controls Card */}
       <div className="glass-card rounded-2xl p-4 sm:p-5">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <Sliders className="w-4 h-4 text-indigo-600" />
             <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-              Digital Twin Engine
+              Tracker Controller
             </h2>
           </div>
           <span
             className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
-              simulationRunning
-                ? simulationPaused
-                  ? 'bg-amber-100 text-amber-800'
-                  : 'bg-emerald-100 text-emerald-800'
-                : 'bg-slate-100 text-slate-600'
+              systemStatusText === 'TRACKING'
+                ? 'bg-emerald-100 text-emerald-800'
+                : systemStatusText === 'TRACKING_LOCKED'
+                ? 'bg-indigo-100 text-indigo-800'
+                : systemStatusText === 'NO_SUN'
+                ? 'bg-amber-100 text-amber-800'
+                : 'bg-slate-100 text-slate-700'
             }`}
           >
-            {simulationRunning
-              ? simulationPaused
-                ? 'PAUSED'
-                : 'RUNNING'
-              : 'STOPPED'}
+            {systemStatusText || 'STOPPED'}
           </span>
         </div>
+
+        {stopReason && (
+          <div className="mb-3 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[10px] font-mono text-amber-800">
+            {stopReason}
+          </div>
+        )}
 
         {/* Primary Action Buttons */}
         <div className="grid grid-cols-3 gap-2">

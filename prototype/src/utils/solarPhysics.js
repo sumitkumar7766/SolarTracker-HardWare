@@ -71,8 +71,8 @@ export const calculateLDRValues = (sunAzimuth, sunElevation, panelAzimuth, panel
   // Differential sensitivity factor (ADC counts per degree of misalignment)
   const sensitivity = 16.5 * intensity;
 
-  // Small organic high-frequency noise
-  const noise = () => (Math.random() - 0.5) * 8;
+  // Deterministic clean calculation without random noise
+  const noise = () => 0;
 
   // LDR positions relative to center:
   // TL: Left (-), Top (+)
