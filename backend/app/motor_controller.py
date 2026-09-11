@@ -1,19 +1,29 @@
 """
 Motor Controller and Tracking Decision Logic
-Manages MG995 continuous azimuth servo and positional elevation servo commands
-Enforces deadbands, low-light stops, limit bounds, and safety states
+Manages MG995 continuous azimuth servo and positional elevation servo decisions.
+Enforces deadbands, reverse flags, safe step limits, independent panel state estimation,
+and MOTOR_ENABLED safety test mode.
 """
-from typing import Tuple
+from typing import Tuple, Optional
 from .config import settings
-from .schemas import MotorState
+from .schemas import MotorState, PanelData
 
 class MotorController:
     def __init__(self):
         # Current motor control status
-        self.azimuth_state: str = "STOP"          # LEFT, RIGHT, STOP
-        self.elevation_state: str = "HOLD"        # UP, DOWN, HOLD
-        self.azimuth_command: int = settings.AZ_NEUTRAL  # 1500 us
-        self.elevation_angle: float = settings.ELEVATION_INITIAL # 90.0 deg
+        self.azimuth_state: str = "STOP"
+        self.elevation_state: str = "HOLD"
+        self.azimuth_command: int = settings.AZ_STOP  # 1500 us
+        self.elevation_angle: float = settings.ELEVATION_INITIAL  # 90.0 deg
+
+        # Independent Panel Position State (Section 6 & 7)
+        self.panel_elevation: float = settings.ELEVATION_INITIAL  # 90.0 deg, 10 - 170
+        self.estimated_panel_azimuth: float = 180.0  # Clearly labeled Estimated Panel Azimuth (0 - 360)
+
+        # Estimated slew rate for continuous rotation servo at AZ_SPEED=40 (~4.0 deg/sec)
+        # At 500ms cycle interval, approx 2.0 degrees per tick
+        self.azimuth_slew_step_deg: float = 2.0
+        self.elevation_step_deg: float = 1.0
 
     def compute_auto_decision(
         self,
@@ -21,88 +31,164 @@ class MotorController:
         predicted_el_residual: float,
         target_azimuth: float,
         target_elevation: float,
-        current_elevation: float,
-        lux: float
-    ) -> Tuple[MotorState, str, bool]:
+        lux: float,
+        ldr_horizontal_error: Optional[int] = None,
+        ldr_vertical_error: Optional[int] = None
+    ) -> Tuple[MotorState, PanelData, str, bool, Optional[str]]:
         """
-        Calculates tracking decisions under AUTO mode:
+        Computes tracking decisions under AUTO mode:
         Returns:
-            (MotorState, decision_reason, is_locked)
+            (MotorState, PanelData, decision_reason, is_locked, serial_command_or_none)
         """
-        # 1. Low light safety condition
+        # 1. Low light safety condition (Section 17)
         if lux < settings.LOW_LIGHT_LUX:
             self.stop_all()
-            return self.get_state(), "NO SUN: Lux below threshold (Night/Cloud Hold)", False
+            return self.get_state(), self.get_panel_data(), "NO SUN: Lux below threshold (<150 Lux)", False, "CMD,MOTOR,STOP"
 
-        # 2. Check deadbands
+        # 2. Check deadbands (Section 15)
         az_in_deadband = abs(predicted_az_residual) <= settings.AZIMUTH_DEADBAND
         el_in_deadband = abs(predicted_el_residual) <= settings.ELEVATION_DEADBAND
 
-        if az_in_deadband and el_in_deadband:
-            self.azimuth_state = "STOP"
-            self.azimuth_command = settings.AZ_NEUTRAL
-            self.elevation_state = "HOLD"
-            return self.get_state(), "TRACKING LOCKED: Angular errors within ±1.0° deadband", True
+        # Optional optical LDR balance verification
+        ldr_balanced = True
+        if ldr_horizontal_error is not None and ldr_vertical_error is not None:
+            ldr_balanced = (abs(ldr_horizontal_error) < 150) and (abs(ldr_vertical_error) < 150)
 
-        # 3. Azimuth Decision (Continuous Rotation MG995)
+        if az_in_deadband and el_in_deadband and ldr_balanced:
+            self.azimuth_state = "STOP"
+            self.azimuth_command = settings.AZ_STOP
+            self.elevation_state = "HOLD"
+            decision = "TRACKING LOCKED: Sun aligned with panel within configured tolerance."
+            cmd = "CMD,MOTOR,STOP" if settings.MOTOR_ENABLED else None
+            return self.get_state(), self.get_panel_data(), decision, True, cmd
+
+        serial_cmd: Optional[str] = None
+
+        # 3. Azimuth Decision (Continuous Rotation MG995 on GPIO25)
         if az_in_deadband:
             self.azimuth_state = "STOP"
-            self.azimuth_command = settings.AZ_NEUTRAL
-        elif predicted_az_residual > 0:
-            # Needs positive azimuth correction -> slew RIGHT
-            self.azimuth_state = "RIGHT"
-            self.azimuth_command = settings.AZ_NEUTRAL + settings.AZ_SPEED  # 1540 us
+            self.azimuth_command = settings.AZ_STOP
+            az_cmd_str = "CMD,AZ,STOP"
         else:
-            # Needs negative azimuth correction -> slew LEFT
-            self.azimuth_state = "LEFT"
-            self.azimuth_command = settings.AZ_NEUTRAL - settings.AZ_SPEED  # 1460 us
+            # Positive residual normally means turn RIGHT, unless AZIMUTH_REVERSE is true
+            turn_right = (predicted_az_residual > 0)
+            if settings.AZIMUTH_REVERSE:
+                turn_right = not turn_right
 
-        # 4. Elevation Decision (Positional MG995 Servo)
-        clamped_el_target = max(settings.ELEVATION_MIN, min(settings.ELEVATION_MAX, target_elevation))
-        el_diff = clamped_el_target - current_elevation
+            if turn_right:
+                raw_state = "RIGHT"
+                self.azimuth_command = settings.AZ_STOP + settings.AZ_SPEED  # 1540 us
+                az_cmd_str = "CMD,AZ,RIGHT"
+                # Update estimated azimuth
+                self.estimated_panel_azimuth = (self.estimated_panel_azimuth + self.azimuth_slew_step_deg) % 360.0
+            else:
+                raw_state = "LEFT"
+                self.azimuth_command = settings.AZ_STOP - settings.AZ_SPEED  # 1460 us
+                az_cmd_str = "CMD,AZ,LEFT"
+                # Update estimated azimuth
+                self.estimated_panel_azimuth = (self.estimated_panel_azimuth - self.azimuth_slew_step_deg) % 360.0
 
-        if el_in_deadband or abs(el_diff) <= settings.ELEVATION_DEADBAND:
+            if not settings.MOTOR_ENABLED:
+                self.azimuth_state = f"WOULD MOVE {raw_state}"
+            else:
+                self.azimuth_state = raw_state
+
+        # 4. Elevation Decision (Positional MG995 on GPIO26)
+        if el_in_deadband:
             self.elevation_state = "HOLD"
-        elif el_diff > 0:
-            self.elevation_state = "UP"
-            self.elevation_angle = min(settings.ELEVATION_MAX, current_elevation + 1.0)
+            el_cmd_str = "CMD,EL,STOP"
         else:
-            self.elevation_state = "DOWN"
-            self.elevation_angle = max(settings.ELEVATION_MIN, current_elevation - 1.0)
+            # Positive residual normally means tilt UP, unless ELEVATION_REVERSE is true
+            tilt_up = (predicted_el_residual > 0)
+            if settings.ELEVATION_REVERSE:
+                tilt_up = not tilt_up
 
-        decision_str = f"Slew Az: {self.azimuth_state} (Cmd {self.azimuth_command}µs) | El: {self.elevation_state} (Target {clamped_el_target:.1f}°)"
-        return self.get_state(), decision_str, False
+            if tilt_up:
+                raw_el = "UP"
+                el_cmd_str = "CMD,EL,UP"
+                self.panel_elevation = min(settings.ELEVATION_MAX, self.panel_elevation + self.elevation_step_deg)
+            else:
+                raw_el = "DOWN"
+                el_cmd_str = "CMD,EL,DOWN"
+                self.panel_elevation = max(settings.ELEVATION_MIN, self.panel_elevation - self.elevation_step_deg)
 
-    def manual_jog(self, axis: str, direction: int, step: float = 4.0) -> MotorState:
-        """Applies manual jog step to specified axis."""
+            self.elevation_angle = self.panel_elevation
+
+            if not settings.MOTOR_ENABLED:
+                self.elevation_state = f"WOULD MOVE {raw_el}"
+            else:
+                self.elevation_state = raw_el
+
+        # Formulate hardware command string if MOTOR_ENABLED is True
+        if settings.MOTOR_ENABLED:
+            if not az_in_deadband:
+                serial_cmd = az_cmd_str
+            elif not el_in_deadband:
+                serial_cmd = el_cmd_str
+            else:
+                serial_cmd = "CMD,MOTOR,STOP"
+        else:
+            serial_cmd = None
+
+        decision_str = (
+            f"Azimuth: {self.azimuth_state} (Cmd {self.azimuth_command}µs) | "
+            f"Elevation: {self.elevation_state} (Angle {self.elevation_angle:.1f}°)"
+        )
+        if not settings.MOTOR_ENABLED:
+            decision_str += " [SAFETY TEST MODE - MOTORS DISABLED]"
+
+        return self.get_state(), self.get_panel_data(), decision_str, False, serial_cmd
+
+    def manual_jog(self, axis: str, direction: int, step: float = 1.0) -> Tuple[MotorState, PanelData, Optional[str]]:
+        """Applies manual jog step to specified axis in MANUAL mode."""
+        serial_cmd: Optional[str] = None
         if axis == "azimuth":
             if direction > 0:
-                self.azimuth_state = "RIGHT"
-                self.azimuth_command = settings.AZ_NEUTRAL + settings.AZ_SPEED
+                raw_dir = "RIGHT"
+                self.azimuth_command = settings.AZ_STOP + settings.AZ_SPEED
+                self.estimated_panel_azimuth = (self.estimated_panel_azimuth + step) % 360.0
+                cmd = "CMD,AZ,RIGHT"
             elif direction < 0:
-                self.azimuth_state = "LEFT"
-                self.azimuth_command = settings.AZ_NEUTRAL - settings.AZ_SPEED
+                raw_dir = "LEFT"
+                self.azimuth_command = settings.AZ_STOP - settings.AZ_SPEED
+                self.estimated_panel_azimuth = (self.estimated_panel_azimuth - step) % 360.0
+                cmd = "CMD,AZ,LEFT"
             else:
-                self.azimuth_state = "STOP"
-                self.azimuth_command = settings.AZ_NEUTRAL
+                raw_dir = "STOP"
+                self.azimuth_command = settings.AZ_STOP
+                cmd = "CMD,AZ,STOP"
+
+            self.azimuth_state = raw_dir if settings.MOTOR_ENABLED else f"WOULD MOVE {raw_dir}"
+            if settings.MOTOR_ENABLED:
+                serial_cmd = cmd
+
         elif axis == "elevation":
             if direction > 0:
-                self.elevation_state = "UP"
-                self.elevation_angle = min(settings.ELEVATION_MAX, self.elevation_angle + step)
+                raw_dir = "UP"
+                self.panel_elevation = min(settings.ELEVATION_MAX, self.panel_elevation + step)
+                self.elevation_angle = self.panel_elevation
+                cmd = "CMD,EL,UP"
             elif direction < 0:
-                self.elevation_state = "DOWN"
-                self.elevation_angle = max(settings.ELEVATION_MIN, self.elevation_angle - step)
+                raw_dir = "DOWN"
+                self.panel_elevation = max(settings.ELEVATION_MIN, self.panel_elevation - step)
+                self.elevation_angle = self.panel_elevation
+                cmd = "CMD,EL,DOWN"
             else:
-                self.elevation_state = "HOLD"
+                raw_dir = "HOLD"
+                cmd = "CMD,EL,STOP"
 
-        return self.get_state()
+            self.elevation_state = raw_dir if settings.MOTOR_ENABLED else f"WOULD MOVE {raw_dir}"
+            if settings.MOTOR_ENABLED:
+                serial_cmd = cmd
 
-    def stop_all(self) -> MotorState:
+        return self.get_state(), self.get_panel_data(), serial_cmd
+
+    def stop_all(self) -> Tuple[MotorState, PanelData]:
         """Emergency and fail-safe full stop for both motors."""
         self.azimuth_state = "STOP"
         self.elevation_state = "HOLD"
-        self.azimuth_command = settings.AZ_NEUTRAL
-        return self.get_state()
+        self.azimuth_command = settings.AZ_STOP
+        return self.get_state(), self.get_panel_data()
 
     def get_state(self) -> MotorState:
         return MotorState(
@@ -110,6 +196,12 @@ class MotorController:
             elevation=self.elevation_state,
             azimuth_command=self.azimuth_command,
             elevation_angle=round(self.elevation_angle, 1)
+        )
+
+    def get_panel_data(self) -> PanelData:
+        return PanelData(
+            estimated_azimuth=round(self.estimated_panel_azimuth, 1),
+            elevation=round(self.panel_elevation, 1)
         )
 
 motor_controller = MotorController()

@@ -1,8 +1,7 @@
 """
 Non-blocking USB Serial Manager for ESP32 Communication
-Automatically handles connection, auto-reconnection, and safe queue ingestion.
+Handles auto-reconnection, telemetry packet forwarding, and bidirectional motor command dispatch.
 """
-import asyncio
 import threading
 import time
 from typing import Callable, Optional
@@ -20,6 +19,7 @@ class SerialManager:
         self.is_connected = False
         self.running = False
         self.thread: Optional[threading.Thread] = None
+        self._write_lock = threading.Lock()
 
     def start(self):
         """Starts background daemon reader thread."""
@@ -31,6 +31,7 @@ class SerialManager:
     def stop(self):
         """Stops background reader and closes port safely."""
         self.running = False
+        self.send_command("CMD,MOTOR,STOP")
         if self.ser and self.ser.is_open:
             try:
                 self.ser.close()
@@ -53,10 +54,13 @@ class SerialManager:
                     print(f"[SERIAL] Connected to ESP32 on {self.port}")
                     time.sleep(2.0)  # ESP32 boot/reset stabilization
 
-                # Read line
+                # Read line from ESP32
                 line = self.ser.readline().decode("utf-8", errors="ignore").strip()
                 if line:
-                    self.on_packet_received(line)
+                    if line.startswith("ACK,") or line.startswith("WARN,") or line.startswith("ERR,") or line == "SYSTEM_READY":
+                        print(f"[ESP32 NOTIFICATION] {line}")
+                    else:
+                        self.on_packet_received(line)
 
             except (serial.SerialException, OSError) as e:
                 if self.is_connected:
@@ -70,17 +74,22 @@ class SerialManager:
                         pass
                     self.ser = None
                 time.sleep(2.0)
-            except Exception as e:
+            except Exception:
                 time.sleep(0.5)
 
     def send_command(self, command: str) -> bool:
         """Sends command string over serial if connected."""
-        if self.ser and self.ser.is_open:
-            try:
-                self.ser.write(f"{command.strip()}\n".encode("utf-8"))
-                self.ser.flush()
-                return True
-            except Exception as e:
-                print(f"[SERIAL WRITE ERROR] {e}")
-                return False
+        if not command:
+            return False
+        with self._write_lock:
+            if self.ser and self.ser.is_open:
+                try:
+                    payload = f"{command.strip()}\n".encode("utf-8")
+                    self.ser.write(payload)
+                    self.ser.flush()
+                    print(f"[SERIAL TX] -> {command.strip()}")
+                    return True
+                except Exception as e:
+                    print(f"[SERIAL WRITE ERROR] Failed to send {command}: {e}")
+                    return False
         return False

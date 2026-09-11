@@ -28,11 +28,12 @@ export const EnergyWeatherCard = () => {
     xl4015Output,
     bmsStatus,
     luxBracket,
+    esp32Connected,
   } = useSimulation();
 
   return (
     <div className="space-y-4">
-      {/* 1. INA219 & Power Subsystem Telemetry */}
+      {/* 1. INA260 & Power Subsystem Telemetry */}
       <div className="glass-card rounded-2xl p-4 sm:p-5">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -60,9 +61,15 @@ export const EnergyWeatherCard = () => {
               Bus Voltage
             </span>
             <div className="font-mono text-base font-extrabold text-slate-900 mt-0.5">
-              {voltage} <span className="text-xs font-medium text-slate-500">V</span>
+              {voltage !== null && voltage !== undefined ? (
+                <>
+                  {voltage} <span className="text-xs font-medium text-slate-500">V</span>
+                </>
+              ) : (
+                '--'
+              )}
             </div>
-            <span className="text-[9px] text-slate-400">INA219 I2C 0x40</span>
+            <span className="text-[9px] text-slate-400">INA260 I2C 0x40</span>
           </div>
 
           <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
@@ -70,9 +77,15 @@ export const EnergyWeatherCard = () => {
               Load Current
             </span>
             <div className="font-mono text-base font-extrabold text-slate-900 mt-0.5">
-              {current} <span className="text-xs font-medium text-slate-500">A</span>
+              {current !== null && current !== undefined ? (
+                <>
+                  {current} <span className="text-xs font-medium text-slate-500">A</span>
+                </>
+              ) : (
+                '--'
+              )}
             </div>
-            <span className="text-[9px] text-slate-400">0.1Ω Precision Shunt</span>
+            <span className="text-[9px] text-slate-400">Precision Shunt</span>
           </div>
 
           <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-100">
@@ -80,7 +93,13 @@ export const EnergyWeatherCard = () => {
               Solar Power
             </span>
             <div className="font-mono text-base font-extrabold text-indigo-900 mt-0.5">
-              {power} <span className="text-xs font-medium text-indigo-600">W</span>
+              {power !== null && power !== undefined ? (
+                <>
+                  {power} <span className="text-xs font-medium text-indigo-600">W</span>
+                </>
+              ) : (
+                '--'
+              )}
             </div>
             <span className="text-[9px] text-indigo-500 font-medium">Active Generation</span>
           </div>
@@ -110,15 +129,21 @@ export const EnergyWeatherCard = () => {
           <div className="grid grid-cols-3 gap-1.5 text-center font-mono">
             <div className="p-1.5 rounded-lg bg-slate-50 border border-slate-200/60">
               <span className="text-[9px] text-slate-400 block">Cell #1</span>
-              <span className="font-bold text-slate-800 text-[11px]">{cellVoltages[0]}V</span>
+              <span className="font-bold text-slate-800 text-[11px]">
+                {esp32Connected ? `${cellVoltages[0]}V` : '--'}
+              </span>
             </div>
             <div className="p-1.5 rounded-lg bg-slate-50 border border-slate-200/60">
               <span className="text-[9px] text-slate-400 block">Cell #2</span>
-              <span className="font-bold text-slate-800 text-[11px]">{cellVoltages[1]}V</span>
+              <span className="font-bold text-slate-800 text-[11px]">
+                {esp32Connected ? `${cellVoltages[1]}V` : '--'}
+              </span>
             </div>
             <div className="p-1.5 rounded-lg bg-slate-50 border border-slate-200/60">
               <span className="text-[9px] text-slate-400 block">Cell #3</span>
-              <span className="font-bold text-slate-800 text-[11px]">{cellVoltages[2]}V</span>
+              <span className="font-bold text-slate-800 text-[11px]">
+                {esp32Connected ? `${cellVoltages[2]}V` : '--'}
+              </span>
             </div>
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-slate-600">
@@ -130,7 +155,7 @@ export const EnergyWeatherCard = () => {
         </div>
       </div>
 
-      {/* 2. DHT22 & Dual BME680 Environmental Array */}
+      {/* 2. DHT22 & Environmental Array */}
       <div className="glass-card rounded-2xl p-4 sm:p-5">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -140,7 +165,7 @@ export const EnergyWeatherCard = () => {
             </h2>
           </div>
           <span className="text-[10px] font-mono bg-sky-50 text-sky-700 border border-sky-200 px-2 py-0.5 rounded-full font-semibold">
-            DHT22 + 2x BME680
+            {esp32Connected ? 'DHT22 Live Telemetry' : 'Waiting for ESP32...'}
           </span>
         </div>
 
@@ -152,7 +177,7 @@ export const EnergyWeatherCard = () => {
               <span className="text-[9px] font-semibold uppercase">Temp</span>
             </div>
             <div className="font-mono text-sm font-extrabold text-slate-800">
-              {temperature}°C
+              {temperature !== null && temperature !== undefined ? `${temperature}°C` : '--'}
             </div>
           </div>
 
@@ -162,7 +187,7 @@ export const EnergyWeatherCard = () => {
               <span className="text-[9px] font-semibold uppercase">Humidity</span>
             </div>
             <div className="font-mono text-sm font-extrabold text-slate-800">
-              {humidity}%
+              {humidity !== null && humidity !== undefined ? `${humidity}%` : '--'}
             </div>
           </div>
 
@@ -172,12 +197,12 @@ export const EnergyWeatherCard = () => {
               <span className="text-[9px] font-semibold uppercase">Barometer</span>
             </div>
             <div className="font-mono text-sm font-extrabold text-slate-800">
-              {bme680_1.pressure}
+              {esp32Connected ? bme680_1.pressure : '--'}
             </div>
           </div>
         </div>
 
-        {/* BME680 Dual Comparison & Air Quality */}
+        {/* Air Quality & Rain Drop */}
         <div className="mt-3 pt-3 border-t border-slate-100 space-y-2 text-xs">
           <div className="flex items-center justify-between">
             <span className="text-slate-600 flex items-center gap-1">
@@ -185,7 +210,7 @@ export const EnergyWeatherCard = () => {
               BME680 #1 (IAQ Score):
             </span>
             <span className="font-mono font-bold text-emerald-600">
-              {bme680_1.iaq} (Good Quality)
+              {esp32Connected ? `${bme680_1.iaq} (Good Quality)` : '--'}
             </span>
           </div>
 
@@ -195,7 +220,7 @@ export const EnergyWeatherCard = () => {
               BME680 #2 (IAQ Score):
             </span>
             <span className="font-mono font-bold text-emerald-600">
-              {bme680_2.iaq} (Good Quality)
+              {esp32Connected ? `${bme680_2.iaq} (Good Quality)` : '--'}
             </span>
           </div>
 

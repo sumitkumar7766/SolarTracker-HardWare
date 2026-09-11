@@ -113,24 +113,20 @@ export const Header = ({ activeTab, setActiveTab }) => {
               {!simulationRunning ? (
                 <button
                   onClick={startSimulation}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm transition-colors"
-                  title="Start Autonomous Tracking Simulation"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer"
+                  title="Start Autonomous AI Solar Tracking"
                 >
                   <Play className="w-3.5 h-3.5 fill-current" />
-                  <span className="hidden sm:inline">Start</span>
+                  <span className="hidden sm:inline">Track Sun</span>
                 </button>
               ) : (
                 <button
                   onClick={pauseSimulation}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-colors ${
-                    simulationPaused
-                      ? 'bg-amber-500 hover:bg-amber-600 text-white'
-                      : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200'
-                  }`}
-                  title={simulationPaused ? 'Resume Simulation' : 'Pause Simulation'}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-colors cursor-pointer bg-slate-800 hover:bg-slate-900 text-white"
+                  title="Stop Tracking"
                 >
                   <Pause className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">{simulationPaused ? 'Resume' : 'Pause'}</span>
+                  <span className="hidden sm:inline">Stop</span>
                 </button>
               )}
 

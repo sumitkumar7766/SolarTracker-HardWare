@@ -500,6 +500,17 @@ export const SolarTrackerCanvas = () => {
   const {
     azimuth,
     elevation,
+    rawSunAzimuth,
+    rawSunElevation,
+    estimatedPanelAzimuth,
+    panelElevationDeg,
+    targetPanelAzimuth,
+    targetPanelElevation,
+    azimuthCorrection,
+    elevationCorrection,
+    motorAzimuthStatus,
+    motorElevationStatus,
+    systemStatusText,
     trackingEfficiency,
     power,
     simulationRunning,
@@ -680,26 +691,53 @@ export const SolarTrackerCanvas = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[11px]">
-            <div>
-              <span className="text-slate-400">Azimuth:</span>{' '}
+          <div className="space-y-1.5 font-mono text-[11px] pt-1">
+            {/* Real Sun Position (pvlib) */}
+            <div className="flex items-center justify-between gap-3 bg-amber-50/70 px-2 py-1 rounded-lg border border-amber-200/60">
+              <span className="text-amber-800 font-bold flex items-center gap-1">
+                <span>☀️</span> Real Sun:
+              </span>
               <span className="font-semibold text-slate-800">
-                {azimuth >= 0 ? `+${azimuth.toFixed(1)}°` : `${azimuth.toFixed(1)}°`}
+                Az: {rawSunAzimuth.toFixed(1)}° | El: {rawSunElevation.toFixed(1)}°
               </span>
             </div>
-            <div>
-              <span className="text-slate-400">Elevation:</span>{' '}
+
+            {/* Independent Estimated Panel Position */}
+            <div className="flex items-center justify-between gap-3 bg-indigo-50/70 px-2 py-1 rounded-lg border border-indigo-200/60">
+              <span className="text-indigo-800 font-bold flex items-center gap-1">
+                <span>🔲</span> Panel:
+              </span>
               <span className="font-semibold text-slate-800">
-                {elevation >= 0 ? `+${elevation.toFixed(1)}°` : `${elevation.toFixed(1)}°`}
+                Est. Az: {estimatedPanelAzimuth.toFixed(1)}° | El: {panelElevationDeg.toFixed(1)}°
               </span>
             </div>
-            <div>
-              <span className="text-slate-400">Efficiency:</span>{' '}
-              <span className="font-semibold text-emerald-600">{trackingEfficiency}%</span>
+
+            {/* Target Panel Position */}
+            <div className="flex items-center justify-between gap-3 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200/60">
+              <span className="text-slate-600 font-semibold flex items-center gap-1">
+                <span>🎯</span> ML Target:
+              </span>
+              <span className="font-semibold text-slate-800">
+                Az: {targetPanelAzimuth.toFixed(1)}° | El: {targetPanelElevation.toFixed(1)}°
+              </span>
             </div>
-            <div>
-              <span className="text-slate-400">Power:</span>{' '}
-              <span className="font-semibold text-indigo-600">{power} W</span>
+
+            {/* ML Residual Correction */}
+            <div className="flex items-center justify-between gap-3 bg-purple-50/60 px-2 py-1 rounded-lg border border-purple-200/60">
+              <span className="text-purple-700 font-semibold flex items-center gap-1">
+                <span>⚙️</span> Correction:
+              </span>
+              <span className="font-semibold text-purple-900">
+                ΔAz: {azimuthCorrection > 0 ? '+' : ''}{azimuthCorrection.toFixed(1)}° | ΔEl: {elevationCorrection > 0 ? '+' : ''}{elevationCorrection.toFixed(1)}°
+              </span>
+            </div>
+
+            {/* Live Motor Commands */}
+            <div className="flex items-center justify-between gap-3 px-2 py-0.5 text-[10px] text-slate-500">
+              <span>Motors:</span>
+              <span className="font-bold text-slate-700">
+                Az: {motorAzimuthStatus} | El: {motorElevationStatus}
+              </span>
             </div>
           </div>
         </div>

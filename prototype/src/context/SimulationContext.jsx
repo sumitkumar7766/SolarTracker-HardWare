@@ -30,8 +30,9 @@ export const SimulationProvider = ({ children }) => {
   const [backendStatus, setBackendStatus] = useState('DISCONNECTED'); // 'CONNECTED' | 'DISCONNECTED' | 'RECONNECTING'
   const [esp32Connected, setEsp32Connected] = useState(false);
   const [modelLoaded, setModelLoaded] = useState(false);
+  const [motorEnabled, setMotorEnabled] = useState(false);
   const [systemStatusText, setSystemStatusText] = useState('STOPPED');
-  const [stopReason, setStopReason] = useState(null);
+  const [stopReason, setStopReason] = useState('System initialized');
 
   // --- Operational State ---
   const [simulationRunning, setSimulationRunning] = useState(false);
@@ -39,75 +40,41 @@ export const SimulationProvider = ({ children }) => {
   const [trackingMode, setTrackingModeState] = useState('AUTO'); // 'AUTO' | 'MANUAL' | 'STOPPED'
   const [threshold, setThreshold] = useState(80); // ADC count deadband threshold
 
-  // --- Current & Target Tracker Angles (Degrees) ---
-  const [azimuth, setAzimuth] = useState(0); // -90 to +90
-  const [elevation, setElevation] = useState(30); // 0 to 80
-  const [targetAzimuth, setTargetAzimuth] = useState(0);
-  const [targetElevation, setElevationTarget] = useState(30);
-
-  // --- Sun Celestial Position ---
-  const [sunAzimuth, setSunAzimuth] = useState(22);
-  const [sunElevation, setSunElevation] = useState(48);
+  // --- Real Astronomical Sun Ephemeris (pvlib Asia/Kolkata) ---
+  const [rawSunAzimuth, setRawSunAzimuth] = useState(180.0);
+  const [rawSunElevation, setRawSunElevation] = useState(45.0);
+  const [sunAzimuth, setSunAzimuth] = useState(0.0); // Mapped for 3D Three.js
+  const [sunElevation, setSunElevation] = useState(45.0);
   const [sunIntensity, setSunIntensity] = useState(1.0);
   const [sunTimeOfDay, setSunTimeOfDay] = useState(12.0);
 
-  // --- Calibration State ---
-  const [isCalibrating, setIsCalibrating] = useState(false);
-  const [calibrationProgress, setCalibrationProgress] = useState(0);
+  // --- Independent Panel Position State (Section 5, 6, 7) ---
+  const [estimatedPanelAzimuth, setEstimatedPanelAzimuth] = useState(180.0); // 0 - 360
+  const [panelElevationDeg, setPanelElevationDeg] = useState(90.0); // 10 - 170
+  // Mapped 3D mechanism visual orientations
+  const [azimuth, setAzimuth] = useState(0.0); // -180 to +180
+  const [elevation, setElevation] = useState(40.0); // 0 to 80 tilt for 3D assembly
 
-  // --- Sensor Values ---
-  const [ldr, setLdr] = useState({
-    tl: 0,
-    tr: 0,
-    bl: 0,
-    br: 0,
-  });
+  // --- ML Target Panel Position ---
+  const [targetPanelAzimuth, setTargetPanelAzimuth] = useState(180.0);
+  const [targetPanelElevation, setTargetPanelElevation] = useState(90.0);
+  const [targetAzimuth, setTargetAzimuth] = useState(0.0);
+  const [targetElevation, setElevationTarget] = useState(40.0);
 
-  // DHT22 Atmospheric
-  const [temperature, setTemperature] = useState(0.0);
-  const [humidity, setHumidity] = useState(0.0);
-  const [heatIndex, setHeatIndex] = useState(0.0);
+  // --- ML Model Residual Corrections ---
+  const [azimuthCorrection, setAzimuthCorrection] = useState(0.0);
+  const [elevationCorrection, setElevationCorrection] = useState(0.0);
+  const [aiDecision, setAiDecision] = useState('WAITING FOR ESP32 TELEMETRY');
+  const [aiConfidence, setAiConfidence] = useState(95.0);
+  const [aiPredictedAzimuth, setAiPredictedAzimuth] = useState(180.0);
+  const [aiPredictedElevation, setAiPredictedElevation] = useState(90.0);
+  const [aiPredictedPower, setAiPredictedPower] = useState(0.0);
+  const [expectedGain, setExpectedGain] = useState(0.0);
+  const movementCost = 0.28;
 
-  // 2x BME680 Environmental Telemetry (derived from real DHT22 / Lux telemetry)
-  const [bme680_1, setBme680_1] = useState({
-    temp: 0.0,
-    humidity: 0.0,
-    pressure: 1013.2,
-    iaq: 40,
-    gasResistance: 125.0,
-  });
-  const [bme680_2, setBme680_2] = useState({
-    temp: 0.0,
-    humidity: 0.0,
-    pressure: 1013.2,
-    iaq: 38,
-    gasResistance: 128.0,
-  });
-
-  // Rain Drop Sensor
-  const [rainState, setRainState] = useState('NO RAIN');
-  const [rainMoisture, setRainMoisture] = useState(3800);
-
-  // INA260 / INA219 Energy Telemetry (REAL values from ESP32 INA260)
-  const [voltage, setVoltage] = useState(0.0);
-  const [current, setCurrent] = useState(0.0);
-  const [power, setPower] = useState(0.0);
-  const [energyToday, setEnergyToday] = useState(getInitialEnergyToday);
-
-  // 3S 18650 Battery Pack & Power Subsystem
-  const [battery, setBattery] = useState(88.0);
-  const [cellVoltages, setCellVoltages] = useState([4.12, 4.11, 4.13]);
-  const [bmsStatus, setBmsStatus] = useState('NORMAL BALANCED');
-  const [luxBracket, setLuxBracket] = useState('10k–30k Lux');
-  const [tp4056Status, setTp4056Status] = useState('STANDBY TRICKLE');
-  const [xl4015Output, setXl4015Output] = useState({ voltage: 5.12, current: 1.85 });
-
-  // Core Controllers Status
-  const [esp32Status, setEsp32Status] = useState('DISCONNECTED');
-  const [rpi5Status, setRpi5Status] = useState('OFFLINE');
-  const [arduinoStatus, setArduinoStatus] = useState('READY');
-
-  // Mechanical Actuators & Limit Switches
+  // --- Actuator States ---
+  const [motorAzimuthStatus, setMotorAzimuthStatus] = useState('STOP');
+  const [motorElevationStatus, setMotorElevationStatus] = useState('HOLD');
   const [motorStatus, setMotorStatus] = useState('IDLE');
   const [servoStatus, setServoStatus] = useState('IDLE');
   const [limitSwitches, setLimitSwitches] = useState({
@@ -117,15 +84,60 @@ export const SimulationProvider = ({ children }) => {
     elevationMax: false,
   });
 
-  // Efficiency & AI Predictions (REAL from solar_tracker_model.pkl)
+  // --- Real Sensor Values (null when ESP32 disconnected) ---
+  const [ldr, setLdr] = useState({
+    tl: null,
+    tr: null,
+    bl: null,
+    br: null,
+  });
+  const [temperature, setTemperature] = useState(null);
+  const [humidity, setHumidity] = useState(null);
+  const [heatIndex, setHeatIndex] = useState(null);
+
+  // BME680 Environmental Telemetry
+  const [bme680_1, setBme680_1] = useState({
+    temp: null,
+    humidity: null,
+    pressure: 1013.2,
+    iaq: 40,
+    gasResistance: 125.0,
+  });
+  const [bme680_2, setBme680_2] = useState({
+    temp: null,
+    humidity: null,
+    pressure: 1013.2,
+    iaq: 38,
+    gasResistance: 128.0,
+  });
+
+  // Rain Drop Sensor
+  const [rainState, setRainState] = useState('NO RAIN');
+  const [rainMoisture, setRainMoisture] = useState(3800);
+
+  // INA260 Real Electrical Telemetry
+  const [voltage, setVoltage] = useState(null);
+  const [current, setCurrent] = useState(null);
+  const [power, setPower] = useState(null);
+  const [energyToday, setEnergyToday] = useState(getInitialEnergyToday);
+
+  // Battery Pack & Power Subsystem
+  const [battery, setBattery] = useState(88.0);
+  const [cellVoltages, setCellVoltages] = useState([4.12, 4.11, 4.13]);
+  const [bmsStatus, setBmsStatus] = useState('STANDBY');
+  const [luxBracket, setLuxBracket] = useState('Waiting for ESP32...');
+  const [tp4056Status, setTp4056Status] = useState('STANDBY TRICKLE');
+  const [xl4015Output, setXl4015Output] = useState({ voltage: 5.12, current: 1.85 });
+
+  // Core Controllers Status
+  const [esp32Status, setEsp32Status] = useState('DISCONNECTED');
+  const [rpi5Status, setRpi5Status] = useState('OFFLINE');
+  const [arduinoStatus, setArduinoStatus] = useState('READY');
   const [trackingEfficiency, setTrackingEfficiency] = useState(95.0);
-  const [aiPredictedAzimuth, setAiPredictedAzimuth] = useState(0.0);
-  const [aiPredictedElevation, setAiPredictedElevation] = useState(30.0);
-  const [aiPredictedPower, setAiPredictedPower] = useState(0.0);
-  const [aiConfidence, setAiConfidence] = useState(99.5);
-  const [aiDecision, setAiDecision] = useState('WAITING FOR TELEMETRY');
-  const [expectedGain, setExpectedGain] = useState(0.0);
-  const movementCost = 0.28;
+
+  // Calibration State
+  const [isCalibrating, setIsCalibrating] = useState(false);
+  const [calibrationProgress, setCalibrationProgress] = useState(0);
 
   // View & Interactive Digital Twin Features
   const [showLabels, setShowLabels] = useState(true);
@@ -173,51 +185,109 @@ export const SimulationProvider = ({ children }) => {
 
       // 1. System Info
       if (data.system) {
-        setEsp32Connected(data.system.esp32_connected);
-        setModelLoaded(data.system.model_loaded);
-        setSystemStatusText(data.system.status);
-        setTrackingModeState(data.system.mode);
+        const isEspConnected = !!data.system.esp32_connected;
+        setEsp32Connected(isEspConnected);
+        setModelLoaded(!!data.system.model_loaded);
+        setMotorEnabled(!!data.system.motor_enabled);
+        setSystemStatusText(data.system.status || 'STOPPED');
+        setTrackingModeState(data.system.mode || 'AUTO');
 
-        setEsp32Status(
-          data.system.esp32_connected ? 'CONNECTED (USB SERIAL)' : 'DISCONNECTED'
-        );
-        setRpi5Status(
-          data.system.model_loaded ? 'ONLINE (solar_tracker_model.pkl)' : 'OFFLINE'
-        );
+        setEsp32Status(isEspConnected ? 'CONNECTED (USB SERIAL)' : 'DISCONNECTED');
+        setRpi5Status(data.system.model_loaded ? 'ONLINE (solar_tracker_model.pkl)' : 'OFFLINE');
+
+        if (data.system.status === 'TRACKING' || data.system.status === 'TRACKING_LOCKED') {
+          setSimulationRunning(true);
+          setSimulationPaused(false);
+        } else if (data.system.status === 'STOPPED' || data.system.status === 'EMERGENCY_STOP' || data.system.status === 'ESP32_DISCONNECTED') {
+          setSimulationRunning(false);
+        }
       }
 
       if (data.stop) {
-        setStopReason(data.stop.reason);
+        setStopReason(data.stop.reason || null);
+        if (data.stop.is_stopped) {
+          setSimulationRunning(false);
+        }
       }
 
-      // 2. Solar Position (pvlib)
-      if (data.solar) {
-        const rawAz = data.solar.azimuth || 0;
-        const rawEl = data.solar.elevation || 0;
-        // Map 0-360 azimuth to -90 to +90 for 3D visual mechanism orientation
-        const mappedAz = rawAz > 180 ? rawAz - 360 : rawAz;
-        setSunAzimuth(Number(mappedAz.toFixed(1)));
-        setSunElevation(Number(Math.max(0, rawEl).toFixed(1)));
+      // 2. Real Astronomical Sun Position (pvlib)
+      const sunAz = (data.sun?.azimuth ?? data.solar?.azimuth);
+      const sunEl = (data.sun?.elevation ?? data.solar?.elevation);
+      if (typeof sunAz === 'number' && typeof sunEl === 'number') {
+        setRawSunAzimuth(sunAz);
+        setRawSunElevation(sunEl);
+        // Map 0-360 azimuth to -180 to +180 for 3D Sun celestial sphere
+        const mappedSunAz = sunAz > 180 ? sunAz - 360 : sunAz;
+        setSunAzimuth(Number(mappedSunAz.toFixed(1)));
+        setSunElevation(Number(Math.max(0, sunEl).toFixed(1)));
       }
 
-      // 3. Sensor LDRs
-      if (data.ldr) {
-        const ldrValues = {
+      // 3. Independent Panel Position State (Section 5, 6, 7)
+      if (data.panel) {
+        const pAz = data.panel.estimated_azimuth ?? 180.0;
+        const pEl = data.panel.elevation ?? 90.0;
+        setEstimatedPanelAzimuth(pAz);
+        setPanelElevationDeg(pEl);
+
+        // Map to 3D Three.js assembly:
+        // Azimuth: 0-360 -> -180 to +180
+        const mappedPanelAz = pAz > 180 ? pAz - 360 : pAz;
+        setAzimuth(Number(mappedPanelAz.toFixed(1)));
+        // Positional servo 10° to 170° mapped to 3D visual tilt 0° to 80°
+        const visualTilt = Math.max(0, Math.min(80, (pEl - 10) * (80.0 / 160.0)));
+        setElevation(Number(visualTilt.toFixed(1)));
+      }
+
+      // 4. ML Target Panel Position
+      const tAz = data.target?.azimuth ?? data.ml?.target_azimuth;
+      const tEl = data.target?.elevation ?? data.ml?.target_elevation;
+      if (typeof tAz === 'number' && typeof tEl === 'number') {
+        setTargetPanelAzimuth(tAz);
+        setTargetPanelElevation(tEl);
+        const mappedTargetAz = tAz > 180 ? tAz - 360 : tAz;
+        setTargetAzimuth(Number(mappedTargetAz.toFixed(1)));
+        setElevationTarget(Number(tEl.toFixed(1)));
+        setAiPredictedAzimuth(Number(tAz.toFixed(1)));
+        setAiPredictedElevation(Number(tEl.toFixed(1)));
+      }
+
+      // 5. ML Model Predictions
+      if (data.ml) {
+        setAzimuthCorrection(data.ml.azimuth_correction ?? 0.0);
+        setElevationCorrection(data.ml.elevation_correction ?? 0.0);
+        setAiDecision(data.ml.decision || 'WAITING');
+        setAiConfidence(data.ml.confidence ?? 95.0);
+      }
+
+      // 6. Actuators
+      if (data.motors) {
+        setMotorAzimuthStatus(data.motors.azimuth || 'STOP');
+        setMotorElevationStatus(data.motors.elevation || 'HOLD');
+        setMotorStatus(data.motors.azimuth && !data.motors.azimuth.includes('STOP') ? 'RUNNING' : 'IDLE');
+        setServoStatus(data.motors.elevation && !data.motors.elevation.includes('HOLD') ? 'ACTIVE' : 'IDLE');
+      }
+
+      // 7. Sensor LDRs (Real data only, null if offline)
+      if (data.system?.esp32_connected && data.ldr && data.ldr.top !== null) {
+        setLdr({
           tl: data.ldr.top,
           tr: data.ldr.right,
           bl: data.ldr.left,
           br: data.ldr.bottom,
-        };
-        setLdr(ldrValues);
+        });
+      } else {
+        setLdr({ tl: null, tr: null, bl: null, br: null });
       }
 
-      // 4. Environment (DHT22 & Lux)
-      if (data.environment) {
-        const t = data.environment.temperature || 0;
-        const h = data.environment.humidity || 0;
+      // 8. Environment (Real DHT22 & Lux, null if offline)
+      if (data.system?.esp32_connected && data.environment && data.environment.lux !== null) {
+        const t = data.environment.temperature;
+        const h = data.environment.humidity;
+        const luxVal = data.environment.lux;
         setTemperature(t);
         setHumidity(h);
-        setHeatIndex(Number((t + 0.05 * h).toFixed(1)));
+        setHeatIndex(t !== null && h !== null ? Number((t + 0.05 * h).toFixed(1)) : null);
+        setSunIntensity(Math.min(1.5, Math.max(0.05, luxVal / 50000.0)));
 
         setBme680_1({
           temp: t,
@@ -227,22 +297,25 @@ export const SimulationProvider = ({ children }) => {
           gasResistance: 126.2,
         });
         setBme680_2({
-          temp: Number((t + 0.2).toFixed(1)),
-          humidity: Number((h - 0.3).toFixed(1)),
+          temp: t !== null ? Number((t + 0.2).toFixed(1)) : null,
+          humidity: h !== null ? Number((h - 0.3).toFixed(1)) : null,
           pressure: 1013.2,
           iaq: 36,
           gasResistance: 129.5,
         });
-
-        const luxVal = data.environment.lux || 0;
-        setSunIntensity(Math.min(1.5, Math.max(0.05, luxVal / 50000.0)));
+      } else {
+        setTemperature(null);
+        setHumidity(null);
+        setHeatIndex(null);
+        setBme680_1({ temp: null, humidity: null, pressure: 1013.4, iaq: '--', gasResistance: '--' });
+        setBme680_2({ temp: null, humidity: null, pressure: 1013.2, iaq: '--', gasResistance: '--' });
       }
 
-      // 5. Electrical (Photovoltaic Profile & Battery Telemetry)
-      if (data.electrical) {
-        const v = data.electrical.voltage || 0;
-        const a = data.electrical.current || 0;
-        const w = data.electrical.power || 0;
+      // 9. Electrical (Real INA260 Telemetry, null if offline)
+      if (data.system?.esp32_connected && data.electrical && data.electrical.voltage !== null) {
+        const v = data.electrical.voltage;
+        const a = data.electrical.current;
+        const w = data.electrical.power;
         const kwh = typeof data.electrical.energy_today === 'number'
           ? Number(data.electrical.energy_today.toFixed(4))
           : 0;
@@ -251,6 +324,7 @@ export const SimulationProvider = ({ children }) => {
         setCurrent(a);
         setPower(w);
         setEnergyToday(kwh);
+        setAiPredictedPower(Number((w || 0).toFixed(2)));
 
         try {
           const today = new Date().toISOString().slice(0, 10);
@@ -260,64 +334,39 @@ export const SimulationProvider = ({ children }) => {
           );
         } catch (e) {}
 
-        if (data.electrical.battery_soc !== undefined) {
-          setBattery(data.electrical.battery_soc);
-        }
-        if (data.electrical.cell_voltages && Array.isArray(data.electrical.cell_voltages)) {
-          setCellVoltages(data.electrical.cell_voltages);
-        }
-        if (data.electrical.bms_status) {
-          setBmsStatus(data.electrical.bms_status);
-        }
-        if (data.electrical.lux_bracket) {
-          setLuxBracket(data.electrical.lux_bracket);
-        }
+        if (data.electrical.battery_soc !== undefined) setBattery(data.electrical.battery_soc);
+        if (data.electrical.cell_voltages && Array.isArray(data.electrical.cell_voltages)) setCellVoltages(data.electrical.cell_voltages);
+        if (data.electrical.bms_status) setBmsStatus(data.electrical.bms_status);
+        if (data.electrical.lux_bracket) setLuxBracket(data.electrical.lux_bracket);
+      } else {
+        setVoltage(null);
+        setCurrent(null);
+        setPower(null);
+        setLuxBracket(data.system?.esp32_connected ? 'Waiting...' : 'Waiting for ESP32...');
       }
 
-      // 6. ML Model Predictions
-      if (data.ml) {
-        const tAz = data.ml.target_azimuth || 0;
-        const tEl = data.ml.target_elevation || 30;
-
-        const mappedTargetAz = tAz > 180 ? tAz - 360 : tAz;
-        setAiPredictedAzimuth(Number(mappedTargetAz.toFixed(1)));
-        setAiPredictedElevation(Number(tEl.toFixed(1)));
-        setAiDecision(data.ml.decision || 'OPTIMAL ALIGNMENT');
-        setAiPredictedPower(Number((data.electrical?.power || 0).toFixed(2)));
-
-        setTargetAzimuth(Number(mappedTargetAz.toFixed(1)));
-        setElevationTarget(Number(tEl.toFixed(1)));
-
-        // Compute alignment efficiency
-        setTrackingEfficiency(98.5);
+      // 10. Push to historical charts
+      if (data.system?.esp32_connected && data.electrical?.power !== null) {
+        setHistoryData((prev) => {
+          const point = {
+            time: timeStr,
+            tl: data.ldr?.top ?? 0,
+            tr: data.ldr?.right ?? 0,
+            bl: data.ldr?.left ?? 0,
+            br: data.ldr?.bottom ?? 0,
+            power: data.electrical?.power ?? 0,
+            voltage: data.electrical?.voltage ?? 0,
+            current: data.electrical?.current ?? 0,
+          };
+          const next = [...prev, point];
+          return next.slice(-60);
+        });
       }
 
-      // 7. Motors
-      if (data.motors) {
-        setMotorStatus(data.motors.azimuth !== 'STOP' ? 'RUNNING' : 'IDLE');
-        setServoStatus(data.motors.elevation !== 'HOLD' ? 'ACTIVE' : 'IDLE');
-      }
-
-      // 8. Push to historical charts
-      setHistoryData((prev) => {
-        const point = {
-          time: timeStr,
-          tl: data.ldr?.top || 0,
-          tr: data.ldr?.right || 0,
-          bl: data.ldr?.left || 0,
-          br: data.ldr?.bottom || 0,
-          power: data.electrical?.power || 0,
-          voltage: data.electrical?.voltage || 0,
-          current: data.electrical?.current || 0,
-        };
-        const next = [...prev, point];
-        return next.slice(-60); // Keep last 60 live data points
-      });
-
-      // 9. Add real UART serial logs
-      if (data.electrical && data.ldr) {
+      // 11. Add real UART serial logs
+      if (data.system?.esp32_connected && data.electrical?.voltage !== null) {
         addSerialLog(
-          `ESP32 Live | Lux: ${data.environment?.lux || 0} | Pwr: ${data.electrical?.power || 0}W (${data.electrical?.voltage || 0}V, ${data.electrical?.current || 0}A) | AI Corr: Az ${data.ml?.azimuth_correction > 0 ? '+' : ''}${data.ml?.azimuth_correction || 0}°, El ${data.ml?.elevation_correction > 0 ? '+' : ''}${data.ml?.elevation_correction || 0}°`,
+          `ESP32 Live | Lux: ${data.environment?.lux ?? 0} | Pwr: ${data.electrical?.power ?? 0}W | AI Corr: Az ${data.ml?.azimuth_correction > 0 ? '+' : ''}${data.ml?.azimuth_correction || 0}°, El ${data.ml?.elevation_correction > 0 ? '+' : ''}${data.ml?.elevation_correction || 0}° | Decision: ${data.ml?.decision || ''}`,
           'sensor'
         );
       }
@@ -330,39 +379,8 @@ export const SimulationProvider = ({ children }) => {
     };
   }, [addSerialLog]);
 
-  // Smooth visual angle interpolation for 3D digital twin
-  const lastTimeRef = useRef(Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const now = Date.now();
-      const dt = (now - lastTimeRef.current) / 1000;
-      lastTimeRef.current = now;
-
-      setAzimuth((cur) => {
-        const diff = targetAzimuth - cur;
-        if (Math.abs(diff) < 0.05) return targetAzimuth;
-        return cur + diff * Math.min(1, dt * 2.8);
-      });
-
-      setElevation((cur) => {
-        const diff = targetElevation - cur;
-        if (Math.abs(diff) < 0.05) return targetElevation;
-        return cur + diff * Math.min(1, dt * 2.8);
-      });
-
-      setLimitSwitches({
-        azimuthMin: azimuth <= -89.0,
-        azimuthMax: azimuth >= 89.0,
-        elevationMin: elevation <= 10.5,
-        elevationMax: elevation >= 169.5,
-      });
-    }, 60);
-
-    return () => clearInterval(timer);
-  }, [targetAzimuth, targetElevation, azimuth, elevation]);
-
   // Operational Controls connected to real REST API
-  const startSimulation = useCallback(async () => {
+  const startTracking = useCallback(async () => {
     setSimulationRunning(true);
     setSimulationPaused(false);
     try {
@@ -373,20 +391,21 @@ export const SimulationProvider = ({ children }) => {
     }
   }, [addSerialLog]);
 
-  const pauseSimulation = useCallback(async () => {
-    setSimulationPaused((prev) => !prev);
-    try {
-      await trackerWS.stopTracking();
-      addSerialLog('REST API: Stop/Pause command sent to motors', 'warning');
-    } catch {}
-  }, [addSerialLog]);
-
-  const resetSimulation = useCallback(async () => {
+  const stopTracking = useCallback(async () => {
     setSimulationRunning(false);
     setSimulationPaused(false);
     try {
       await trackerWS.stopTracking();
-      addSerialLog('REST API: System Reset & Motors Stopped', 'system');
+      addSerialLog('REST API: Stop command sent -> MOTORS HALTED', 'warning');
+    } catch {}
+  }, [addSerialLog]);
+
+  const emergencyStop = useCallback(async () => {
+    setSimulationRunning(false);
+    setSimulationPaused(false);
+    try {
+      await trackerWS.emergencyStop();
+      addSerialLog('REST API: EMERGENCY STOP ENGAGED -> ALL MOTORS FORCED STOP', 'warning');
     } catch {}
   }, [addSerialLog]);
 
@@ -445,6 +464,7 @@ export const SimulationProvider = ({ children }) => {
     backendStatus,
     esp32Connected,
     modelLoaded,
+    motorEnabled,
     systemStatusText,
     stopReason,
     simulationRunning,
@@ -453,12 +473,21 @@ export const SimulationProvider = ({ children }) => {
     setTrackingMode,
     threshold,
     setThreshold,
-    azimuth,
-    elevation,
+    // Independent Panel Position
+    estimatedPanelAzimuth,
+    panelElevationDeg,
+    azimuth, // Mapped for 3D mechanism
+    elevation, // Mapped for 3D mechanism
+    // ML Target Panel Position
+    targetPanelAzimuth,
+    targetPanelElevation,
     targetAzimuth,
     targetElevation,
     setTargetAzimuth,
     setElevationTarget,
+    // Real Astronomical Sun Ephemeris
+    rawSunAzimuth,
+    rawSunElevation,
     sunAzimuth,
     sunElevation,
     setSunAzimuth,
@@ -467,8 +496,24 @@ export const SimulationProvider = ({ children }) => {
     setSunIntensity,
     sunTimeOfDay,
     setSunTimeOfDay,
-    isCalibrating,
-    calibrationProgress,
+    // ML Corrections
+    azimuthCorrection,
+    elevationCorrection,
+    aiPredictedAzimuth,
+    aiPredictedElevation,
+    aiPredictedPower,
+    aiConfidence,
+    aiDecision,
+    expectedGain,
+    movementCost,
+    // Motor Statuses
+    motorAzimuthStatus,
+    motorElevationStatus,
+    motorStatus,
+    servoStatus,
+    limitSwitches,
+    trackingEfficiency,
+    // Sensors (Real data only, null if offline)
     ldr,
     temperature,
     humidity,
@@ -491,17 +536,9 @@ export const SimulationProvider = ({ children }) => {
     esp32Status,
     rpi5Status,
     arduinoStatus,
-    motorStatus,
-    servoStatus,
-    limitSwitches,
-    trackingEfficiency,
-    aiPredictedAzimuth,
-    aiPredictedElevation,
-    aiPredictedPower,
-    aiConfidence,
-    aiDecision,
-    expectedGain,
-    movementCost,
+    isCalibrating,
+    calibrationProgress,
+    // 3D Visual flags
     showLabels,
     setShowLabels,
     showSunPath,
@@ -527,9 +564,13 @@ export const SimulationProvider = ({ children }) => {
     setCameraPreset,
     historyData,
     serialLogs,
-    startSimulation,
-    pauseSimulation,
-    resetSimulation,
+    // Operational Controls
+    startTracking,
+    stopTracking,
+    emergencyStop,
+    startSimulation: startTracking,
+    pauseSimulation: stopTracking,
+    resetSimulation: stopTracking,
     manualJog,
     calibrateSensors,
     clearSerialLogs,

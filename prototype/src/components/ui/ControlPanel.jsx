@@ -18,17 +18,18 @@ import {
   Sparkles,
   CloudRain,
   Shield,
+  ShieldAlert,
   Layers,
+  AlertTriangle,
 } from 'lucide-react';
 import { useSimulation } from '../../context/SimulationContext';
 
 export const ControlPanel = () => {
   const {
     simulationRunning,
-    simulationPaused,
-    startSimulation,
-    pauseSimulation,
-    resetSimulation,
+    startTracking,
+    stopTracking,
+    emergencyStop,
     trackingMode,
     setTrackingMode,
     manualJog,
@@ -37,33 +38,30 @@ export const ControlPanel = () => {
     isCalibrating,
     calibrationProgress,
     calibrateSensors,
-    sunAzimuth,
-    setSunAzimuth,
-    sunElevation,
-    setSunElevation,
+    rawSunAzimuth,
+    rawSunElevation,
     sunIntensity,
-    setSunIntensity,
-    battery,
-    power,
-    trackingEfficiency,
     rainState,
     setRainState,
     rpi5Status,
     esp32Status,
-    bmsStatus,
+    esp32Connected,
+    motorEnabled,
     systemStatusText,
     stopReason,
+    motorAzimuthStatus,
+    motorElevationStatus,
   } = useSimulation();
 
   return (
     <div className="space-y-4">
-      {/* 1. Main Simulation Controls Card */}
+      {/* 1. Main Tracking Controls Card */}
       <div className="glass-card rounded-2xl p-4 sm:p-5">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <Sliders className="w-4 h-4 text-indigo-600" />
             <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-              Tracker Controller
+              Tracking Controller
             </h2>
           </div>
           <span
@@ -74,6 +72,10 @@ export const ControlPanel = () => {
                 ? 'bg-indigo-100 text-indigo-800'
                 : systemStatusText === 'NO_SUN'
                 ? 'bg-amber-100 text-amber-800'
+                : systemStatusText === 'EMERGENCY_STOP'
+                ? 'bg-red-100 text-red-800 font-extrabold'
+                : systemStatusText === 'ESP32_DISCONNECTED'
+                ? 'bg-rose-100 text-rose-800'
                 : 'bg-slate-100 text-slate-700'
             }`}
           >
@@ -82,42 +84,49 @@ export const ControlPanel = () => {
         </div>
 
         {stopReason && (
-          <div className="mb-3 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[10px] font-mono text-amber-800">
+          <div className="mb-3 px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-[10px] font-mono text-amber-800">
             {stopReason}
           </div>
         )}
 
-        {/* Primary Action Buttons */}
-        <div className="grid grid-cols-3 gap-2">
+        {/* Safety Mode Banner */}
+        {!motorEnabled && (
+          <div className="mb-3 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-[10px] font-semibold text-blue-800 flex items-center gap-1.5">
+            <Shield className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+            <span>Safety Test Mode Active (MOTOR_ENABLED=false)</span>
+          </div>
+        )}
+
+        {/* Primary Action Buttons: TRACK SUN & STOP */}
+        <div className="grid grid-cols-2 gap-2">
           {!simulationRunning ? (
             <button
-              onClick={startSimulation}
-              className="col-span-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white font-bold text-xs shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
+              onClick={startTracking}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white font-bold text-xs shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
+              title="Start Autonomous AI Solar Tracking"
             >
               <Play className="w-4 h-4 fill-current" />
-              <span>START SIMULATION</span>
+              <span>TRACK SUN</span>
             </button>
           ) : (
             <button
-              onClick={pauseSimulation}
-              className={`col-span-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs shadow-sm transition-all active:scale-[0.98] cursor-pointer ${
-                simulationPaused
-                  ? 'bg-amber-500 hover:bg-amber-600 text-white'
-                  : 'bg-slate-800 hover:bg-slate-900 text-white'
-              }`}
+              onClick={stopTracking}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs shadow-sm transition-all active:scale-[0.98] cursor-pointer bg-slate-800 hover:bg-slate-900 text-white"
+              title="Halt Automatic Tracking"
             >
               <Pause className="w-4 h-4" />
-              <span>{simulationPaused ? 'RESUME TRACKING' : 'PAUSE'}</span>
+              <span>STOP TRACKING</span>
             </button>
           )}
 
+          {/* Emergency Stop Button */}
           <button
-            onClick={resetSimulation}
-            className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors border border-slate-200/80 active:scale-[0.98] cursor-pointer"
-            title="Reset system to defaults"
+            onClick={emergencyStop}
+            className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs transition-colors shadow-sm shadow-red-600/20 active:scale-[0.98] cursor-pointer"
+            title="Immediately send STOP command to ESP32 motors"
           >
-            <RotateCcw className="w-4 h-4" />
-            <span>RESET</span>
+            <ShieldAlert className="w-4 h-4" />
+            <span>EMERGENCY STOP</span>
           </button>
         </div>
 
@@ -151,61 +160,71 @@ export const ControlPanel = () => {
         </div>
 
         {/* Manual D-Pad Jog Controls */}
-        {trackingMode === 'MANUAL' && (
-          <div className="mt-4 p-3 bg-indigo-50/60 rounded-xl border border-indigo-100 animate-in fade-in duration-200">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-indigo-900">MANUAL JOG</span>
-              <span className="text-[10px] font-medium text-indigo-600">Step: ±4°</span>
-            </div>
+        <div className="mt-4 p-3 bg-indigo-50/60 rounded-xl border border-indigo-100">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-indigo-900">MANUAL JOG</span>
+            <span className="text-[10px] font-medium text-indigo-600">
+              {trackingMode === 'MANUAL' ? 'Step: ±1°' : 'LOCKED IN AUTO'}
+            </span>
+          </div>
 
-            <div className="flex flex-col items-center justify-center gap-1.5 py-1">
+          {trackingMode !== 'MANUAL' && (
+            <div className="mb-2 p-1.5 rounded-lg bg-indigo-100/60 text-[10px] text-indigo-800 text-center font-medium">
+              Switch mode to MANUAL to enable manual motor jog buttons.
+            </div>
+          )}
+
+          <div className={`flex flex-col items-center justify-center gap-1.5 py-1 ${trackingMode !== 'MANUAL' ? 'opacity-40 pointer-events-none' : ''}`}>
+            <button
+              onClick={() => manualJog('elevation', 1)}
+              disabled={trackingMode !== 'MANUAL'}
+              className="w-10 h-10 rounded-xl bg-white hover:bg-slate-50 active:bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-700 shadow-sm transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed"
+              title="Tilt Up (+Elevation)"
+            >
+              <ArrowUp className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2">
               <button
-                onClick={() => manualJog('elevation', 1)}
-                className="w-10 h-10 rounded-xl bg-white hover:bg-slate-50 active:bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-700 shadow-sm transition-all active:scale-95 cursor-pointer"
-                title="Tilt Up (+Elevation)"
+                onClick={() => manualJog('azimuth', -1)}
+                disabled={trackingMode !== 'MANUAL'}
+                className="w-10 h-10 rounded-xl bg-white hover:bg-slate-50 active:bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-700 shadow-sm transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed"
+                title="Rotate Left (-Azimuth)"
               >
-                <ArrowUp className="w-5 h-5" />
+                <ArrowLeft className="w-5 h-5" />
               </button>
 
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => manualJog('azimuth', -1)}
-                  className="w-10 h-10 rounded-xl bg-white hover:bg-slate-50 active:bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-700 shadow-sm transition-all active:scale-95 cursor-pointer"
-                  title="Rotate Left (-Azimuth)"
-                >
-                  <ArrowLeft className="w-5 h-5" />
-                </button>
-
-                <div className="w-10 h-10 rounded-xl bg-indigo-100/50 flex items-center justify-center text-[10px] font-bold text-indigo-600">
-                  D-PAD
-                </div>
-
-                <button
-                  onClick={() => manualJog('azimuth', 1)}
-                  className="w-10 h-10 rounded-xl bg-white hover:bg-slate-50 active:bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-700 shadow-sm transition-all active:scale-95 cursor-pointer"
-                  title="Rotate Right (+Azimuth)"
-                >
-                  <ArrowRight className="w-5 h-5" />
-                </button>
+              <div className="w-10 h-10 rounded-xl bg-indigo-100/50 flex items-center justify-center text-[10px] font-bold text-indigo-600">
+                D-PAD
               </div>
 
               <button
-                onClick={() => manualJog('elevation', -1)}
-                className="w-10 h-10 rounded-xl bg-white hover:bg-slate-50 active:bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-700 shadow-sm transition-all active:scale-95 cursor-pointer"
-                title="Tilt Down (-Elevation)"
+                onClick={() => manualJog('azimuth', 1)}
+                disabled={trackingMode !== 'MANUAL'}
+                className="w-10 h-10 rounded-xl bg-white hover:bg-slate-50 active:bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-700 shadow-sm transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed"
+                title="Rotate Right (+Azimuth)"
               >
-                <ArrowDown className="w-5 h-5" />
+                <ArrowRight className="w-5 h-5" />
               </button>
             </div>
+
+            <button
+              onClick={() => manualJog('elevation', -1)}
+              disabled={trackingMode !== 'MANUAL'}
+              className="w-10 h-10 rounded-xl bg-white hover:bg-slate-50 active:bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-700 shadow-sm transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed"
+              title="Tilt Down (-Elevation)"
+            >
+              <ArrowDown className="w-5 h-5" />
+            </button>
           </div>
-        )}
+        </div>
 
         {/* Rain Drop Sensor Simulation Switcher */}
         <div className="mt-4 pt-4 border-t border-slate-100">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
               <CloudRain className="w-3.5 h-3.5 text-sky-500" />
-              Rain Drop Simulation:
+              Rain Drop Mode:
             </span>
             <span
               className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
@@ -236,25 +255,19 @@ export const ControlPanel = () => {
           </div>
         </div>
 
-        {/* Deadband Threshold Slider */}
+        {/* Deadband Threshold */}
         <div className="mt-4 pt-4 border-t border-slate-100">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-xs font-semibold text-slate-600">
-              LDR Deadband Threshold:
+              Angular Deadband (Tolerance):
             </span>
             <span className="font-mono font-bold text-xs text-indigo-600">
-              ±{threshold} ADC
+              ±1.0°
             </span>
           </div>
-          <input
-            type="range"
-            min="30"
-            max="180"
-            step="5"
-            value={threshold}
-            onChange={(e) => setThreshold(Number(e.target.value))}
-            className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-          />
+          <p className="text-[10px] text-slate-400">
+            Locked when |ΔAz| ≤ 1.0° & |ΔEl| ≤ 1.0°
+          </p>
         </div>
 
         {/* Calibrate Sensors Button */}
@@ -272,79 +285,49 @@ export const ControlPanel = () => {
             <span>
               {isCalibrating
                 ? `Calibrating LDR Sensors (${calibrationProgress}%)...`
-                : 'Calibrate LDR Sensor Baseline'}
+                : 'Calibrate Sensor Baseline'}
             </span>
           </button>
         </div>
       </div>
 
-      {/* 2. Celestial Sun Position Controls */}
+      {/* 2. Real Astronomical Sun Position Card (pvlib Asia/Kolkata) */}
       <div className="glass-card rounded-2xl p-4 sm:p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <Sun className="w-4 h-4 text-amber-500" />
-          <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-            Celestial Sun Orbit
-          </h2>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Sun className="w-4 h-4 text-amber-500" />
+            <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+              Real Astronomical Sun
+            </h2>
+          </div>
+          <span className="text-[10px] font-mono bg-amber-50 text-amber-800 px-2 py-0.5 rounded-full border border-amber-200 font-bold">
+            pvlib
+          </span>
         </div>
 
-        <div className="space-y-3">
-          <div>
-            <div className="flex items-center justify-between text-xs mb-1">
-              <span className="text-slate-600 font-medium">Sun Azimuth (East-West)</span>
-              <span className="font-mono font-bold text-slate-800">
-                {sunAzimuth >= 0 ? `+${sunAzimuth}°` : `${sunAzimuth}°`}
-              </span>
-            </div>
-            <input
-              type="range"
-              min="-80"
-              max="80"
-              step="1"
-              value={sunAzimuth}
-              onChange={(e) => setSunAzimuth(Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-500"
-            />
+        <div className="space-y-2.5 text-xs">
+          <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70 flex items-center justify-between">
+            <span className="text-slate-600 font-medium">Solar Azimuth:</span>
+            <span className="font-mono font-bold text-slate-900 text-sm">
+              {rawSunAzimuth.toFixed(2)}°
+            </span>
           </div>
 
-          <div>
-            <div className="flex items-center justify-between text-xs mb-1">
-              <span className="text-slate-600 font-medium">Sun Elevation (Altitude)</span>
-              <span className="font-mono font-bold text-slate-800">
-                {sunElevation}°
-              </span>
-            </div>
-            <input
-              type="range"
-              min="10"
-              max="80"
-              step="1"
-              value={sunElevation}
-              onChange={(e) => setSunElevation(Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-500"
-            />
+          <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70 flex items-center justify-between">
+            <span className="text-slate-600 font-medium">Solar Elevation:</span>
+            <span className="font-mono font-bold text-slate-900 text-sm">
+              {rawSunElevation.toFixed(2)}°
+            </span>
           </div>
 
-          <div>
-            <div className="flex items-center justify-between text-xs mb-1">
-              <span className="text-slate-600 font-medium">Irradiance Intensity</span>
-              <span className="font-mono font-bold text-slate-800">
-                {(sunIntensity * 100).toFixed(0)}% ({(sunIntensity * 1000).toFixed(0)} W/m²)
-              </span>
-            </div>
-            <input
-              type="range"
-              min="0.3"
-              max="1.5"
-              step="0.05"
-              value={sunIntensity}
-              onChange={(e) => setSunIntensity(Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-500"
-            />
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-500">
+            <span>Location: 23.25°N, 77.50°E</span>
+            <span className="font-semibold text-slate-700">Asia/Kolkata</span>
           </div>
         </div>
       </div>
 
-      {/* 3. Comprehensive Multi-Controller Health Summary */}
+      {/* 3. Hardware Controller & Bus Topology */}
       <div className="glass-card rounded-2xl p-4 sm:p-5">
         <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
           Controller & Bus Topology
@@ -354,41 +337,45 @@ export const ControlPanel = () => {
           <div className="flex items-center justify-between">
             <span className="text-slate-600 flex items-center gap-1.5">
               <Cpu className="w-3.5 h-3.5 text-emerald-500" />
-              Raspberry Pi 5 (8GB):
+              FastAPI / ML Engine:
             </span>
-            <span className="font-semibold text-emerald-600 text-[11px]">AI Online</span>
+            <span className="font-semibold text-emerald-600 text-[11px] font-mono">
+              ONLINE
+            </span>
           </div>
 
           <div className="flex items-center justify-between">
             <span className="text-slate-600 flex items-center gap-1.5">
               <Cpu className="w-3.5 h-3.5 text-indigo-500" />
-              ESP32 Main Core:
+              ESP32 Firmware:
             </span>
-            <span className="font-semibold text-emerald-600 text-[11px]">FreeRTOS</span>
+            <span
+              className={`font-semibold text-[11px] font-mono ${
+                esp32Connected ? 'text-emerald-600' : 'text-amber-600'
+              }`}
+            >
+              {esp32Connected ? 'USB SERIAL 115200' : 'WAITING'}
+            </span>
           </div>
 
           <div className="flex items-center justify-between">
             <span className="text-slate-600 flex items-center gap-1.5">
-              <Cpu className="w-3.5 h-3.5 text-sky-500" />
-              Arduino Mega 2560:
+              <Compass className="w-3.5 h-3.5 text-purple-500" />
+              Azimuth Motor (GPIO 25):
             </span>
-            <span className="font-semibold text-sky-600 text-[11px]">Standby IO</span>
+            <span className="font-semibold text-[11px] font-mono text-indigo-700">
+              {motorAzimuthStatus}
+            </span>
           </div>
 
           <div className="flex items-center justify-between">
             <span className="text-slate-600 flex items-center gap-1.5">
-              <Shield className="w-3.5 h-3.5 text-emerald-500" />
-              3S BMS Battery Rail:
+              <Sliders className="w-3.5 h-3.5 text-purple-500" />
+              Elevation Motor (GPIO 26):
             </span>
-            <span className="font-mono font-bold text-slate-800">{battery}% (12.4V)</span>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <span className="text-slate-600 flex items-center gap-1.5">
-              <Zap className="w-3.5 h-3.5 text-amber-500" />
-              Solar Generation:
+            <span className="font-semibold text-[11px] font-mono text-indigo-700">
+              {motorElevationStatus}
             </span>
-            <span className="font-mono font-bold text-indigo-600">{power} W ({trackingEfficiency}%)</span>
           </div>
         </div>
       </div>

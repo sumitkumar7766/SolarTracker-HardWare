@@ -12,11 +12,13 @@ import { useSimulation } from '../../context/SimulationContext';
 
 export const AIPredictionCard = () => {
   const {
-    azimuth,
-    elevation,
+    estimatedPanelAzimuth,
+    panelElevationDeg,
     power,
-    aiPredictedAzimuth,
-    aiPredictedElevation,
+    targetPanelAzimuth,
+    targetPanelElevation,
+    azimuthCorrection,
+    elevationCorrection,
     aiPredictedPower,
     aiConfidence,
     aiDecision,
@@ -24,7 +26,7 @@ export const AIPredictionCard = () => {
     movementCost,
   } = useSimulation();
 
-  const isOptimal = aiDecision.includes('HOLD') || aiDecision.includes('OPTIMAL');
+  const isOptimal = aiDecision.includes('HOLD') || aiDecision.includes('OPTIMAL') || aiDecision.includes('LOCKED');
 
   return (
     <div className="glass-card rounded-2xl p-4 sm:p-5">
@@ -66,7 +68,7 @@ export const AIPredictionCard = () => {
           )}
           <div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
-              Predicted Next Action
+              Tracking Decision
             </span>
             <span className="text-xs sm:text-sm font-extrabold">{aiDecision}</span>
           </div>
@@ -74,14 +76,10 @@ export const AIPredictionCard = () => {
 
         <div className="text-right">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
-            Net Power Gain
+            ML Residuals (Correction)
           </span>
-          <span
-            className={`font-mono font-extrabold text-xs sm:text-sm ${
-              expectedGain > movementCost ? 'text-emerald-700' : 'text-slate-600'
-            }`}
-          >
-            {expectedGain > 0 ? `+${expectedGain} W` : '0.0 W'}
+          <span className="font-mono font-extrabold text-xs sm:text-sm text-purple-700">
+            ΔAz: {azimuthCorrection > 0 ? '+' : ''}{azimuthCorrection.toFixed(2)}° | ΔEl: {elevationCorrection > 0 ? '+' : ''}{elevationCorrection.toFixed(2)}°
           </span>
         </div>
       </div>
@@ -94,10 +92,10 @@ export const AIPredictionCard = () => {
             Target Azimuth
           </span>
           <div className="font-mono text-sm font-bold text-slate-800 mt-0.5">
-            {aiPredictedAzimuth >= 0 ? `+${aiPredictedAzimuth}°` : `${aiPredictedAzimuth}°`}
+            {targetPanelAzimuth.toFixed(1)}°
           </div>
           <span className="text-[9px] text-slate-400">
-            Current: {azimuth.toFixed(1)}°
+            Est. Panel: {estimatedPanelAzimuth.toFixed(1)}°
           </span>
         </div>
 
@@ -107,23 +105,23 @@ export const AIPredictionCard = () => {
             Target Elevation
           </span>
           <div className="font-mono text-sm font-bold text-slate-800 mt-0.5">
-            {aiPredictedElevation}°
+            {targetPanelElevation.toFixed(1)}°
           </div>
           <span className="text-[9px] text-slate-400">
-            Current: {elevation.toFixed(1)}°
+            Current Panel: {panelElevationDeg.toFixed(1)}°
           </span>
         </div>
 
         {/* Predicted Generation */}
         <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70">
           <span className="text-[10px] font-semibold text-slate-500 uppercase">
-            Predicted Peak
+            Generation
           </span>
           <div className="font-mono text-sm font-bold text-indigo-600 mt-0.5">
-            {aiPredictedPower} W
+            {power !== null ? `${power} W` : '--'}
           </div>
           <span className="text-[9px] text-slate-400">
-            Current: {power} W
+            Active Power Telemetry
           </span>
         </div>
 
@@ -136,14 +134,14 @@ export const AIPredictionCard = () => {
             {movementCost} W
           </div>
           <span className="text-[9px] text-slate-400">
-            Gain threshold: &gt;0.28W
+            Deadband: ±1.0°
           </span>
         </div>
       </div>
 
       <div className="mt-3 pt-2 text-[10px] text-slate-400 flex items-center justify-between border-t border-slate-100">
-        <span>* AI PREDICTION — SIMULATED: Synthesizes ephemeris model & sensor gradients.</span>
-        <span className="font-mono font-semibold text-purple-600">Model: AstroKalman-Lite</span>
+        <span>* REAL AI MODEL: Dual-residual prediction with Gradient Boosting Regressor (20 features).</span>
+        <span className="font-mono font-semibold text-purple-600">Model: solar_tracker_model.pkl</span>
       </div>
     </div>
   );
