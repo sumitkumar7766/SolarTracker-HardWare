@@ -43,6 +43,11 @@ class ElectricalData(BaseModel):
     current: float = 0.0
     power: float = 0.0
     energy_today: float = 0.0
+    battery_soc: float = 88.0
+    battery_voltage: float = 12.4
+    cell_voltages: list[float] = Field(default_factory=lambda: [4.13, 4.12, 4.14])
+    bms_status: str = "CHARGING (FLOAT)"
+    lux_bracket: str = "0–500 Lux"
 
 
 class MLData(BaseModel):

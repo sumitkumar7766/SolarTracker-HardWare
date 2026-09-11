@@ -27,6 +27,7 @@ export const EnergyWeatherCard = () => {
     cellVoltages,
     xl4015Output,
     bmsStatus,
+    luxBracket,
   } = useSimulation();
 
   return (
@@ -40,9 +41,16 @@ export const EnergyWeatherCard = () => {
               Power Bus & Battery Telemetry
             </h2>
           </div>
-          <span className="text-[10px] font-mono bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-full font-semibold">
-            INA219 + 3S BMS
-          </span>
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            {luxBracket && (
+              <span className="text-[9px] font-mono bg-amber-50 text-amber-800 border border-amber-200/90 px-2 py-0.5 rounded-full font-bold">
+                {luxBracket}
+              </span>
+            )}
+            <span className="text-[10px] font-mono bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-full font-semibold">
+              3S BMS + INA
+            </span>
+          </div>
         </div>
 
         {/* 4 Energy Metrics */}
@@ -82,7 +90,7 @@ export const EnergyWeatherCard = () => {
               Harvested Today
             </span>
             <div className="font-mono text-base font-extrabold text-emerald-900 mt-0.5">
-              {energyToday}{' '}
+              {typeof energyToday === 'number' ? energyToday.toFixed(4) : energyToday}{' '}
               <span className="text-xs font-medium text-emerald-600">kWh</span>
             </div>
             <span className="text-[9px] text-emerald-500 font-medium">Integrated Energy</span>

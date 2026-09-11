@@ -30,45 +30,46 @@ export const GestureCameraController = ({
     const controls = controlsRef.current;
     const hand = handStateRef.current;
 
-    if (!hand || !hand.detected) {
-      // Apply smooth deceleration inertia when hand drops
-      velocity.current.theta *= 0.88;
-      velocity.current.phi *= 0.88;
-      velocity.current.zoom *= 0.85;
-      velocity.current.panX *= 0.85;
-      velocity.current.panY *= 0.85;
+    if (!hand || !hand.detected || hand.isStopped || hand.gesture === 'STOP') {
+      // Immediate hard stop: freeze 3D model camera at that exact point with zero drift or coasting
+      velocity.current.theta = 0;
+      velocity.current.phi = 0;
+      velocity.current.zoom = 0;
+      velocity.current.panX = 0;
+      velocity.current.panY = 0;
     } else {
       const g = hand.gesture;
       const now = Date.now();
 
-      // 1. ✋ ROTATE (Open Palm)
+      // 1. 🛑 STOP (Closed Fist)
+      if (g === 'STOP') {
+        velocity.current.theta = 0;
+        velocity.current.phi = 0;
+        velocity.current.zoom = 0;
+        velocity.current.panX = 0;
+        velocity.current.panY = 0;
+      }
+
+      // 2. 🔄 ROTATE (Open Palm)
       if (g === 'ROTATE' && hand.delta) {
-        // Sensitivity scaling
-        const rotSpeed = 3.8;
+        const rotSpeed = 4.0;
         velocity.current.theta = -hand.delta.x * rotSpeed;
         velocity.current.phi = -hand.delta.y * rotSpeed;
       }
 
-      // 2. 🤏 ZOOM (Pinch)
-      if (g === 'ZOOM' && hand.pinchDelta !== undefined) {
-        const zoomSpeed = 7.5;
-        velocity.current.zoom = -hand.pinchDelta * zoomSpeed;
+      // 3. 🤏 ZOOM IN / 👐 ZOOM OUT (Distinct Zoom Gestures)
+      if ((g === 'ZOOM_IN' || g === 'ZOOM_OUT' || g === 'ZOOM') && hand.zoomDelta !== undefined) {
+        velocity.current.zoom = hand.zoomDelta * 2.8;
       }
 
-      // 3. ✌️ PAN (Two Fingers)
+      // 4. ↔️ PAN (Two Fingers)
       if (g === 'PAN' && hand.delta) {
-        const panSpeed = 4.2;
+        const panSpeed = 4.5;
         velocity.current.panX = -hand.delta.x * panSpeed;
         velocity.current.panY = hand.delta.y * panSpeed;
       }
 
-      // 4. ✊ CENTER (Closed Fist) - Smooth reset to full view
-      if (g === 'CENTER' && now - lastActionTime.current > 1200) {
-        lastActionTime.current = now;
-        if (onResetView) onResetView();
-      }
-
-      // 5. 👍 OVERVIEW (Thumbs Up)
+      // 5. 🏠 OVERVIEW (Thumbs Up)
       if (g === 'OVERVIEW' && now - lastActionTime.current > 1200) {
         lastActionTime.current = now;
         if (onResetView) onResetView();

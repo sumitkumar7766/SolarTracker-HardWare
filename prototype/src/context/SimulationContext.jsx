@@ -3,6 +3,20 @@ import { trackerWS } from '../services/trackerApi';
 
 const SimulationContext = createContext(null);
 
+const getInitialEnergyToday = () => {
+  try {
+    const saved = localStorage.getItem('solar_tracker_energy_today');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      const today = new Date().toISOString().slice(0, 10);
+      if (parsed.date === today && typeof parsed.kwh === 'number') {
+        return parsed.kwh;
+      }
+    }
+  } catch (e) {}
+  return 0.0;
+};
+
 export const useSimulation = () => {
   const context = useContext(SimulationContext);
   if (!context) {
@@ -78,12 +92,13 @@ export const SimulationProvider = ({ children }) => {
   const [voltage, setVoltage] = useState(0.0);
   const [current, setCurrent] = useState(0.0);
   const [power, setPower] = useState(0.0);
-  const [energyToday, setEnergyToday] = useState(0.0);
+  const [energyToday, setEnergyToday] = useState(getInitialEnergyToday);
 
   // 3S 18650 Battery Pack & Power Subsystem
   const [battery, setBattery] = useState(88.0);
   const [cellVoltages, setCellVoltages] = useState([4.12, 4.11, 4.13]);
   const [bmsStatus, setBmsStatus] = useState('NORMAL BALANCED');
+  const [luxBracket, setLuxBracket] = useState('10k–30k Lux');
   const [tp4056Status, setTp4056Status] = useState('STANDBY TRICKLE');
   const [xl4015Output, setXl4015Output] = useState({ voltage: 5.12, current: 1.85 });
 
@@ -223,20 +238,40 @@ export const SimulationProvider = ({ children }) => {
         setSunIntensity(Math.min(1.5, Math.max(0.05, luxVal / 50000.0)));
       }
 
-      // 5. Electrical (INA260)
+      // 5. Electrical (Photovoltaic Profile & Battery Telemetry)
       if (data.electrical) {
         const v = data.electrical.voltage || 0;
         const a = data.electrical.current || 0;
         const w = data.electrical.power || 0;
-        const kwh = data.electrical.energy_today || 0;
+        const kwh = typeof data.electrical.energy_today === 'number'
+          ? Number(data.electrical.energy_today.toFixed(4))
+          : 0;
 
         setVoltage(v);
         setCurrent(a);
         setPower(w);
         setEnergyToday(kwh);
 
-        const cellV = v > 0 ? (v / 3).toFixed(2) : '3.90';
-        setCellVoltages([Number(cellV), Number(cellV), Number(cellV)]);
+        try {
+          const today = new Date().toISOString().slice(0, 10);
+          localStorage.setItem(
+            'solar_tracker_energy_today',
+            JSON.stringify({ date: today, kwh, timestamp: Date.now() })
+          );
+        } catch (e) {}
+
+        if (data.electrical.battery_soc !== undefined) {
+          setBattery(data.electrical.battery_soc);
+        }
+        if (data.electrical.cell_voltages && Array.isArray(data.electrical.cell_voltages)) {
+          setCellVoltages(data.electrical.cell_voltages);
+        }
+        if (data.electrical.bms_status) {
+          setBmsStatus(data.electrical.bms_status);
+        }
+        if (data.electrical.lux_bracket) {
+          setLuxBracket(data.electrical.lux_bracket);
+        }
       }
 
       // 6. ML Model Predictions
@@ -450,6 +485,7 @@ export const SimulationProvider = ({ children }) => {
     battery,
     cellVoltages,
     bmsStatus,
+    luxBracket,
     tp4056Status,
     xl4015Output,
     esp32Status,

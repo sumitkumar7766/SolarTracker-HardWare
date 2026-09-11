@@ -4,22 +4,15 @@ import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import {
   RotateCcw,
-  Sun as SunIcon,
-  Layers,
   Maximize2,
   Minimize2,
   Search,
   Split,
   Activity,
   Zap,
-  Cpu,
-  Compass,
   ArrowUpRight,
-  Filter,
   Camera,
-  Eye,
   Hand,
-  Sparkles,
 } from 'lucide-react';
 import { useSimulation } from '../../context/SimulationContext';
 import { TrackerMechanism } from './TrackerMechanism';
@@ -322,41 +315,44 @@ const CameraController = ({
       const hand = handStateRef.current;
       const now = Date.now();
 
-      if (!hand.detected) {
-        // Friction inertia
-        handVelocity.current.theta *= 0.88;
-        handVelocity.current.phi *= 0.88;
-        handVelocity.current.zoom *= 0.85;
-        handVelocity.current.panX *= 0.85;
-        handVelocity.current.panY *= 0.85;
+      if (!hand.detected || hand.isStopped || hand.gesture === 'STOP') {
+        // Immediate hard stop: freeze 3D model camera at that exact point with zero coasting or drift
+        handVelocity.current.theta = 0;
+        handVelocity.current.phi = 0;
+        handVelocity.current.zoom = 0;
+        handVelocity.current.panX = 0;
+        handVelocity.current.panY = 0;
       } else {
         const g = hand.gesture;
 
-        // ✋ ROTATE (Open Palm)
+        // 1. 🛑 STOP / FREEZE (Closed Fist)
+        if (g === 'STOP') {
+          handVelocity.current.theta = 0;
+          handVelocity.current.phi = 0;
+          handVelocity.current.zoom = 0;
+          handVelocity.current.panX = 0;
+          handVelocity.current.panY = 0;
+        }
+
+        // 2. 🔄 ROTATE (Open Palm)
         if (g === 'ROTATE' && hand.delta) {
           handVelocity.current.theta = -hand.delta.x * 4.2;
           handVelocity.current.phi = -hand.delta.y * 4.2;
         }
 
-        // 🤏 ZOOM (Pinch / Hand Depth)
-        if (g === 'ZOOM' && hand.zoomDelta !== undefined) {
+        // 3. 🤏 ZOOM IN / 👐 ZOOM OUT (Distinct Zoom Gestures)
+        if ((g === 'ZOOM_IN' || g === 'ZOOM_OUT' || g === 'ZOOM') && hand.zoomDelta !== undefined) {
           // positive zoomDelta = ZOOM IN (closer), negative = ZOOM OUT (farther)
-          handVelocity.current.zoom = hand.zoomDelta * 2.6;
+          handVelocity.current.zoom = hand.zoomDelta * 2.8;
         }
 
-        // ✌️ PAN (Two Fingers)
+        // 4. ↔️ PAN (Two Fingers)
         if (g === 'PAN' && hand.delta) {
           handVelocity.current.panX = -hand.delta.x * 4.5;
           handVelocity.current.panY = hand.delta.y * 4.5;
         }
 
-        // ✊ CENTER (Closed Fist)
-        if (g === 'CENTER' && now - lastGestureActionTime.current > 1200) {
-          lastGestureActionTime.current = now;
-          centerCamera();
-        }
-
-        // 👍 OVERVIEW (Thumbs Up)
+        // 5. 🏠 OVERVIEW / RESET (Thumbs Up)
         if (g === 'OVERVIEW' && now - lastGestureActionTime.current > 1200) {
           lastGestureActionTime.current = now;
           centerCamera();
@@ -764,6 +760,7 @@ export const SolarTrackerCanvas = () => {
         handStateRef={handStateRef}
         isHandMode={isHandMode}
         setIsHandMode={setIsHandMode}
+        isCameraControlOpen={isCameraControlOpen}
       />
 
       {/* Dedicated Manual Camera Control Unit (CCU) Panel */}

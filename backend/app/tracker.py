@@ -16,6 +16,8 @@ from .ml_model import ml_engine
 from .sensor_processor import parse_esp32_packet
 from .motor_controller import motor_controller
 from .websocket_manager import ws_manager
+from .power_calculator import calculate_power_bus_telemetry
+from .energy_tracker import energy_tracker
 
 class SolarTrackerCoordinator:
     def __init__(self):
@@ -24,9 +26,7 @@ class SolarTrackerCoordinator:
         self.serial_manager = None
         self.last_broadcast_time = 0.0
 
-        # Accumulated energy today in kWh
-        self.energy_today_kwh = 0.245
-        self.last_energy_calc_time = datetime.now(ZoneInfo(settings.TIMEZONE))
+        self._heartbeat_task = None
 
         # Initialize base state
         self._init_defaults()
@@ -53,8 +53,73 @@ class SolarTrackerCoordinator:
         self.state.motors = motor_controller.get_state()
         self.state.stop = StopState(is_stopped=True, reason="System initialized in STOPPED state")
 
+        # Initial power bus telemetry based on ambient daylight
+        initial_lux = 18500.0 if ephem["Solar_Elevation_deg"] > 10.0 else 150.0
+        pwr_init = calculate_power_bus_telemetry(initial_lux)
+        self.state.environment.lux = initial_lux
+        self.state.electrical.voltage = pwr_init["voltage"]
+        self.state.electrical.current = pwr_init["current"]
+        self.state.electrical.power = pwr_init["power"]
+        self.state.electrical.battery_soc = pwr_init["battery_soc"]
+        self.state.electrical.battery_voltage = pwr_init["battery_voltage"]
+        self.state.electrical.cell_voltages = pwr_init["cell_voltages"]
+        self.state.electrical.bms_status = pwr_init["bms_status"]
+        self.state.electrical.lux_bracket = pwr_init["lux_bracket"]
+        self.state.electrical.energy_today = energy_tracker.get_energy_today()
+
     def set_event_loop(self, loop: asyncio.AbstractEventLoop):
         self.loop = loop
+        if self._heartbeat_task is None and self.loop and not self.loop.is_closed():
+            self._heartbeat_task = self.loop.create_task(self._standalone_heartbeat_loop())
+
+    async def _standalone_heartbeat_loop(self):
+        """When ESP32 is offline, periodically updates solar position, Lux, and Power Bus Telemetry."""
+        import math
+        while True:
+            try:
+                await asyncio.sleep(1.0)
+                if not self.state.system.esp32_connected:
+                    now_dt = datetime.now(ZoneInfo(settings.TIMEZONE))
+                    now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    self.state.timestamp = now_str
+                    self.state.system.last_update = now_str
+
+                    ephem = solar_engine.calculate(now_dt)
+                    el = ephem["Solar_Elevation_deg"]
+                    az = ephem["Solar_Azimuth_deg"]
+                    self.state.solar.azimuth = az
+                    self.state.solar.elevation = el
+                    self.state.solar.baseline_azimuth = ephem["Baseline_Azimuth_deg"]
+                    self.state.solar.baseline_elevation = ephem["Baseline_Elevation_deg"]
+
+                    # Compute ambient daylight Lux from sun elevation
+                    if el <= 0:
+                        lux = 12.0
+                    else:
+                        lux = max(150.0, math.sin(math.radians(min(90.0, el))) * 68000.0)
+
+                    self.state.environment.lux = round(lux, 1)
+                    self.state.environment.temperature = 28.5
+                    self.state.environment.humidity = 48.0
+                    self.state.environment.light_status = "HIGH" if lux >= settings.LOW_LIGHT_LUX else "LOW"
+
+                    # Apply photovoltaic formula
+                    pwr = calculate_power_bus_telemetry(lux)
+                    self.state.electrical.voltage = pwr["voltage"]
+                    self.state.electrical.current = pwr["current"]
+                    self.state.electrical.power = pwr["power"]
+                    self.state.electrical.battery_soc = pwr["battery_soc"]
+                    self.state.electrical.battery_voltage = pwr["battery_voltage"]
+                    self.state.electrical.cell_voltages = pwr["cell_voltages"]
+                    self.state.electrical.bms_status = pwr["bms_status"]
+                    self.state.electrical.lux_bracket = pwr["lux_bracket"]
+                    self.state.electrical.energy_today = energy_tracker.accumulate(pwr["power"], now_dt)
+
+                    await ws_manager.broadcast(self.state.model_dump())
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass
 
     def set_serial_manager(self, serial_mgr):
         self.serial_manager = serial_mgr
@@ -112,16 +177,18 @@ class SolarTrackerCoordinator:
         self.state.environment.humidity = sensor_data["Humidity_percent"]
         self.state.environment.light_status = sensor_data["Light_Status"]
 
-        # 4. Update Electrical & Accumulate Energy
-        calc_dt = (now_dt - self.last_energy_calc_time).total_seconds()
-        self.last_energy_calc_time = now_dt
-        if 0 < calc_dt < 5:
-            self.energy_today_kwh += (sensor_data["Power_W"] * calc_dt) / 3600000.0
+        # 4. Update Electrical & Accumulate Energy via Photovoltaic Profile Formula
+        power_telemetry = calculate_power_bus_telemetry(lux)
 
-        self.state.electrical.voltage = sensor_data["Voltage_V"]
-        self.state.electrical.current = sensor_data["Current_A"]
-        self.state.electrical.power = sensor_data["Power_W"]
-        self.state.electrical.energy_today = round(self.energy_today_kwh, 4)
+        self.state.electrical.voltage = power_telemetry["voltage"]
+        self.state.electrical.current = power_telemetry["current"]
+        self.state.electrical.power = power_telemetry["power"]
+        self.state.electrical.battery_soc = power_telemetry["battery_soc"]
+        self.state.electrical.battery_voltage = power_telemetry["battery_voltage"]
+        self.state.electrical.cell_voltages = power_telemetry["cell_voltages"]
+        self.state.electrical.bms_status = power_telemetry["bms_status"]
+        self.state.electrical.lux_bracket = power_telemetry["lux_bracket"]
+        self.state.electrical.energy_today = energy_tracker.accumulate(power_telemetry["power"], now_dt)
 
         # 5. ML Feature Formulation & Prediction
         # Build exact 20-feature input mapping
@@ -143,9 +210,9 @@ class SolarTrackerCoordinator:
             "Lux": sensor_data["Lux"],
             "Temperature_C": sensor_data["Temperature_C"],
             "Humidity_percent": sensor_data["Humidity_percent"],
-            "Voltage_V": sensor_data["Voltage_V"],
-            "Current_A": sensor_data["Current_A"],
-            "Power_W": sensor_data["Power_W"]
+            "Voltage_V": power_telemetry["voltage"],
+            "Current_A": power_telemetry["current"],
+            "Power_W": power_telemetry["power"]
         }
 
         try:

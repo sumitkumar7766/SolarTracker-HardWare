@@ -1,14 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Camera,
   VideoOff,
   Eye,
   EyeOff,
-  Sparkles,
   AlertTriangle,
-  CheckCircle2,
-  Sliders,
-  Move,
   Minimize2,
   Maximize2,
   X,
@@ -17,6 +12,7 @@ import {
   getHandLandmarker,
   classifyGesture,
   drawHandLandmarks,
+  isHandNearEdge,
 } from '../../utils/handGestureDetector';
 
 export const HandGestureWebcamPanel = ({
@@ -25,16 +21,16 @@ export const HandGestureWebcamPanel = ({
   handStateRef,
   isHandMode,
   setIsHandMode,
+  isCameraControlOpen = false,
 }) => {
-  const [hasPermission, setHasPermission] = useState(true);
   const [errorMessage, setErrorMessage] = useState(null);
   const [isModelLoading, setIsModelLoading] = useState(true);
   const [showLandmarks, setShowLandmarks] = useState(true);
   const [activeGesture, setActiveGesture] = useState({
     gesture: 'NONE',
-    symbol: '✋',
-    label: 'WAITING FOR HAND',
-    actionText: 'SHOW HAND TO CAMERA',
+    symbol: '🛑',
+    label: 'WAITING FOR CAMERA',
+    actionText: 'STARTING CAMERA...',
   });
   const [isMinimized, setIsMinimized] = useState(false);
 
@@ -49,6 +45,232 @@ export const HandGestureWebcamPanel = ({
   const prevCenter = useRef(null);
   const prevPinch = useRef(null);
   const prevHandScale = useRef(null);
+  const smoothedDelta = useRef({ x: 0, y: 0 });
+  const smoothedZoom = useRef(0);
+  const gestureDebounce = useRef({ gesture: 'NONE', count: 0 });
+
+  const cleanup = useCallback(() => {
+    if (animationFrameId.current) {
+      cancelAnimationFrame(animationFrameId.current);
+      animationFrameId.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (handStateRef) {
+      handStateRef.current = {
+        detected: false,
+        isStopped: true,
+        gesture: 'STOP',
+        delta: { x: 0, y: 0 },
+        zoomDelta: 0,
+      };
+    }
+    prevCenter.current = null;
+    prevPinch.current = null;
+    prevHandScale.current = null;
+    smoothedDelta.current = { x: 0, y: 0 };
+    smoothedZoom.current = 0;
+    gestureDebounce.current = { gesture: 'NONE', count: 0 };
+  }, [handStateRef]);
+
+  // Continuous Detection Loop with Low-Pass Filtering & Instant Edge Freeze
+  const startDetectionLoop = useCallback(() => {
+    const detect = () => {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const landmarker = landmarkerRef.current;
+
+      if (video && video.readyState >= 2 && landmarker) {
+        if (video.currentTime !== lastVideoTime.current) {
+          lastVideoTime.current = video.currentTime;
+          const timestamp = performance.now();
+
+          const result = landmarker.detectForVideo(video, timestamp);
+
+          if (result.landmarks && result.landmarks.length > 0) {
+            const landmarks = result.landmarks[0];
+            const rawGestureInfo = classifyGesture(landmarks);
+            const nearEdge = isHandNearEdge(landmarks, 0.05);
+
+            // 1. Gesture Debouncing & Hysteresis
+            let currentGesture = rawGestureInfo.gesture;
+            if (currentGesture === 'STOP') {
+              // Zero-latency immediate brake on Stop
+              gestureDebounce.current = { gesture: 'STOP', count: 3 };
+            } else {
+              if (gestureDebounce.current.gesture === currentGesture) {
+                gestureDebounce.current.count = Math.min(4, gestureDebounce.current.count + 1);
+              } else {
+                gestureDebounce.current = { gesture: currentGesture, count: 1 };
+              }
+            }
+
+            const gestureInfo = { ...rawGestureInfo };
+
+            // 2. 🛑 Handle STOP Gesture (Closed Fist) - Instant Hard Freeze
+            if (gestureInfo.gesture === 'STOP') {
+              smoothedDelta.current = { x: 0, y: 0 };
+              smoothedZoom.current = 0;
+              prevCenter.current = gestureInfo.center || null;
+              prevPinch.current = gestureInfo.pinchDist || null;
+              prevHandScale.current = gestureInfo.handScale || null;
+
+              if (handStateRef) {
+                handStateRef.current = {
+                  detected: true,
+                  isStopped: true,
+                  gesture: 'STOP',
+                  delta: { x: 0, y: 0 },
+                  zoomDelta: 0,
+                  landmarks,
+                };
+              }
+
+              setActiveGesture(gestureInfo);
+
+              if (showLandmarks && canvas) {
+                const ctx = canvas.getContext('2d');
+                drawHandLandmarks(ctx, landmarks, canvas.width, canvas.height, 'STOP');
+              } else if (canvas) {
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+              }
+
+              animationFrameId.current = requestAnimationFrame(detect);
+              return;
+            }
+
+            // 3. Smooth Delta Computation for Orbit / Pan
+            let delta = { x: 0, y: 0 };
+            if (gestureInfo.center && prevCenter.current) {
+              let dx = gestureInfo.center.x - prevCenter.current.x;
+              let dy = gestureInfo.center.y - prevCenter.current.y;
+
+              // Near-edge dampening to prevent sudden fling before leaving frame
+              if (nearEdge) {
+                dx *= 0.15;
+                dy *= 0.15;
+              }
+
+              // Reject erratic teleport jumps
+              if (Math.abs(dx) > 0.09) dx = 0;
+              if (Math.abs(dy) > 0.09) dy = 0;
+
+              // Deadzone to eliminate hand tremor / jitter
+              const moveDist = Math.hypot(dx, dy);
+              if (moveDist < 0.003) {
+                dx = 0;
+                dy = 0;
+              }
+
+              // Exponential Moving Average filter (alpha = 0.36)
+              smoothedDelta.current.x = 0.36 * dx + 0.64 * smoothedDelta.current.x;
+              smoothedDelta.current.y = 0.36 * dy + 0.64 * smoothedDelta.current.y;
+
+              if (Math.hypot(smoothedDelta.current.x, smoothedDelta.current.y) > 0.0006) {
+                delta = { ...smoothedDelta.current };
+              }
+            }
+
+            // 4. Dedicated Zoom Computation (Zoom In vs Zoom Out)
+            let zoomDelta = 0;
+            if (gestureInfo.gesture === 'ZOOM_IN') {
+              let targetZoom = 0.52; // Steady zoom in speed
+              if (prevHandScale.current && gestureInfo.handScale) {
+                const scaleDiff = gestureInfo.handScale - prevHandScale.current;
+                if (scaleDiff > 0.001) targetZoom += scaleDiff * 25.0;
+              }
+              if (prevPinch.current && gestureInfo.pinchDist) {
+                const pinchDiff = prevPinch.current - gestureInfo.pinchDist;
+                if (pinchDiff > 0.001) targetZoom += pinchDiff * 22.0;
+              }
+              smoothedZoom.current = 0.38 * targetZoom + 0.62 * smoothedZoom.current;
+              zoomDelta = smoothedZoom.current;
+            } else if (gestureInfo.gesture === 'ZOOM_OUT') {
+              let targetZoom = -0.52; // Steady zoom out speed
+              if (prevHandScale.current && gestureInfo.handScale) {
+                const scaleDiff = gestureInfo.handScale - prevHandScale.current;
+                if (scaleDiff < -0.001) targetZoom += scaleDiff * 25.0;
+              }
+              if (prevPinch.current && gestureInfo.pinchDist) {
+                const pinchDiff = prevPinch.current - gestureInfo.pinchDist;
+                if (pinchDiff < -0.001) targetZoom += pinchDiff * 22.0;
+              }
+              smoothedZoom.current = 0.38 * targetZoom + 0.62 * smoothedZoom.current;
+              zoomDelta = smoothedZoom.current;
+            } else {
+              smoothedZoom.current *= 0.4;
+            }
+
+            // Save history for next frame
+            if (gestureInfo.center) prevCenter.current = gestureInfo.center;
+            if (gestureInfo.pinchDist !== undefined) prevPinch.current = gestureInfo.pinchDist;
+            if (gestureInfo.handScale !== undefined) prevHandScale.current = gestureInfo.handScale;
+
+            // Update shared ref for 3D Camera Controller
+            if (handStateRef) {
+              handStateRef.current = {
+                detected: true,
+                isStopped: false,
+                gesture: gestureInfo.gesture,
+                delta,
+                zoomDelta,
+                pointer: gestureInfo.pointer,
+                landmarks,
+              };
+            }
+
+            setActiveGesture(gestureInfo);
+
+            if (showLandmarks && canvas) {
+              const ctx = canvas.getContext('2d');
+              drawHandLandmarks(ctx, landmarks, canvas.width, canvas.height, gestureInfo.gesture);
+            } else if (canvas) {
+              const ctx = canvas.getContext('2d');
+              ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+          } else {
+            // Hand is OUT OF CAMERA -> Freeze 3D model immediately at this exact position
+            if (handStateRef) {
+              handStateRef.current = {
+                detected: false,
+                isStopped: true,
+                gesture: 'STOP',
+                delta: { x: 0, y: 0 },
+                zoomDelta: 0,
+              };
+            }
+
+            prevCenter.current = null;
+            prevPinch.current = null;
+            prevHandScale.current = null;
+            smoothedDelta.current = { x: 0, y: 0 };
+            smoothedZoom.current = 0;
+            gestureDebounce.current = { gesture: 'NONE', count: 0 };
+
+            setActiveGesture({
+              gesture: 'NONE',
+              symbol: '🛑',
+              label: 'OUT OF CAMERA',
+              actionText: '3D MODEL STOPPED (LOCKED)',
+              badgeColor: 'border-red-500/50 text-red-400 bg-red-950/80 shadow-red-500/30',
+            });
+
+            if (canvas) {
+              const ctx = canvas.getContext('2d');
+              ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+          }
+        }
+      }
+
+      animationFrameId.current = requestAnimationFrame(detect);
+    };
+
+    animationFrameId.current = requestAnimationFrame(detect);
+  }, [handStateRef, showLandmarks]);
 
   // Initialize Webcam and MediaPipe HandLandmarker
   useEffect(() => {
@@ -101,10 +323,8 @@ export const HandGestureWebcamPanel = ({
             startDetectionLoop();
           };
         }
-        setHasPermission(true);
       } catch (err) {
         console.error('Webcam access error:', err);
-        setHasPermission(false);
         setErrorMessage('Camera control unavailable. Use mouse/touch controls instead.');
       }
     }
@@ -115,187 +335,66 @@ export const HandGestureWebcamPanel = ({
       isCancelled = true;
       cleanup();
     };
-  }, [isActive]);
-
-  const cleanup = () => {
-    if (animationFrameId.current) {
-      cancelAnimationFrame(animationFrameId.current);
-      animationFrameId.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (handStateRef) {
-      handStateRef.current = { detected: false, gesture: 'NONE' };
-    }
-    prevCenter.current = null;
-    prevPinch.current = null;
-    prevHandScale.current = null;
-  };
-
-  // Continuous Detection Loop
-  const startDetectionLoop = () => {
-    const detect = () => {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const landmarker = landmarkerRef.current;
-
-      if (video && video.readyState >= 2 && landmarker) {
-        if (video.currentTime !== lastVideoTime.current) {
-          lastVideoTime.current = video.currentTime;
-          const timestamp = performance.now();
-
-          const result = landmarker.detectForVideo(video, timestamp);
-
-          if (result.landmarks && result.landmarks.length > 0) {
-            const landmarks = result.landmarks[0];
-            const gestureInfo = classifyGesture(landmarks);
-
-            // Compute delta motion
-            let delta = { x: 0, y: 0 };
-            let zoomDelta = 0;
-
-            // Center motion tracking (for orbit / pan)
-            if (gestureInfo.center) {
-              if (prevCenter.current) {
-                delta = {
-                  x: gestureInfo.center.x - prevCenter.current.x,
-                  y: gestureInfo.center.y - prevCenter.current.y,
-                };
-              }
-            }
-
-            // Dedicated Zoom Computation: Multi-factor (Finger pinch + Hand scale + Vertical motion)
-            if (gestureInfo.gesture === 'ZOOM') {
-              let factorCount = 0;
-
-              // Factor A: Finger separation change
-              // Squeezing fingers closer -> Zoom IN (+), Spreading fingers apart -> Zoom OUT (-)
-              if (gestureInfo.pinchDist !== undefined && prevPinch.current !== null) {
-                const fingerDiff = prevPinch.current - gestureInfo.pinchDist;
-                if (Math.abs(fingerDiff) > 0.001) {
-                  zoomDelta += fingerDiff * 45.0;
-                  factorCount++;
-                }
-              }
-
-              // Factor B: Hand depth/scale change
-              // Hand closer to webcam (handScale increases) -> Zoom IN (+), Hand pulled back -> Zoom OUT (-)
-              if (gestureInfo.handScale !== undefined && prevHandScale.current !== null) {
-                const scaleDiff = gestureInfo.handScale - prevHandScale.current;
-                if (Math.abs(scaleDiff) > 0.0015) {
-                  zoomDelta += scaleDiff * 55.0;
-                  factorCount++;
-                }
-              }
-
-              // Factor C: Vertical gesture movement while in pinch
-              // Moving pinched hand up -> Zoom IN (+), Moving down -> Zoom OUT (-)
-              if (prevCenter.current && gestureInfo.center) {
-                const yDiff = prevCenter.current.y - gestureInfo.center.y;
-                if (Math.abs(yDiff) > 0.002) {
-                  zoomDelta += yDiff * 25.0;
-                  factorCount++;
-                }
-              }
-
-              // Update dynamic UI status for Zoom
-              if (zoomDelta > 0.08) {
-                gestureInfo.actionText = 'ZOOMING IN (+)';
-              } else if (zoomDelta < -0.08) {
-                gestureInfo.actionText = 'ZOOMING OUT (-)';
-              } else {
-                gestureInfo.actionText = '🤏 ZOOM (Move Hand / Fingers)';
-              }
-            }
-
-            // Save history for next frame
-            if (gestureInfo.center) {
-              prevCenter.current = gestureInfo.center;
-            } else {
-              prevCenter.current = null;
-            }
-
-            if (gestureInfo.pinchDist !== undefined) {
-              prevPinch.current = gestureInfo.pinchDist;
-            } else {
-              prevPinch.current = null;
-            }
-
-            if (gestureInfo.handScale !== undefined) {
-              prevHandScale.current = gestureInfo.handScale;
-            } else {
-              prevHandScale.current = null;
-            }
-
-            // Update shared ref for 3D Camera Controller
-            if (handStateRef) {
-              handStateRef.current = {
-                detected: true,
-                gesture: gestureInfo.gesture,
-                delta,
-                zoomDelta, // Direct signed zoom drive: positive = zoom in, negative = zoom out
-                pointer: gestureInfo.pointer,
-                landmarks,
-              };
-            }
-
-            // Update UI state
-            setActiveGesture(gestureInfo);
-
-            // Draw hand landmarks if enabled
-            if (showLandmarks && canvas) {
-              const ctx = canvas.getContext('2d');
-              drawHandLandmarks(ctx, landmarks, canvas.width, canvas.height);
-            } else if (canvas) {
-              const ctx = canvas.getContext('2d');
-              ctx.clearRect(0, 0, canvas.width, canvas.height);
-            }
-          } else {
-            // No hand visible
-            if (handStateRef) {
-              handStateRef.current = { detected: false, gesture: 'NONE' };
-            }
-            prevCenter.current = null;
-            prevPinch.current = null;
-            prevHandScale.current = null;
-            setActiveGesture({
-              gesture: 'NONE',
-              symbol: '✋',
-              label: 'SEARCHING FOR HAND',
-              actionText: 'HOLD HAND IN FRONT OF CAMERA',
-            });
-            if (canvas) {
-              const ctx = canvas.getContext('2d');
-              ctx.clearRect(0, 0, canvas.width, canvas.height);
-            }
-          }
-        }
-      }
-
-      animationFrameId.current = requestAnimationFrame(detect);
-    };
-
-    animationFrameId.current = requestAnimationFrame(detect);
-  };
+  }, [isActive, cleanup, startDetectionLoop]);
 
   if (!isActive) return null;
 
   return (
     <>
-      {/* 1. Center Screen Visual Hand Symbol Overlay */}
-      {isHandMode && activeGesture.gesture !== 'NONE' && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-20 flex flex-col items-center justify-center animate-in fade-in duration-150">
-          <div className="flex flex-col items-center gap-1.5 px-6 py-4 rounded-3xl bg-slate-900/85 text-white shadow-2xl backdrop-blur-xl border border-white/20">
-            <span className="text-4xl filter drop-shadow-md select-none animate-bounce">
+      {/* 1. Visual Hand Symbol Overlay Alert (Positioned Bottom-Right) */}
+      {isHandMode && (
+        <div
+          className={`absolute ${
+            isCameraControlOpen ? 'bottom-[390px]' : 'bottom-20'
+          } right-4 pointer-events-none z-30 flex flex-col items-end animate-in fade-in duration-150`}
+        >
+          <div
+            className={`flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-slate-950/85 text-white shadow-2xl backdrop-blur-xl border transition-all duration-200 ${
+              activeGesture.gesture === 'STOP' || activeGesture.gesture === 'NONE'
+                ? 'border-red-500/50 shadow-red-500/20'
+                : activeGesture.gesture === 'ZOOM_IN'
+                ? 'border-cyan-500/50 shadow-cyan-500/20'
+                : activeGesture.gesture === 'ZOOM_OUT'
+                ? 'border-blue-500/50 shadow-blue-500/20'
+                : activeGesture.gesture === 'ROTATE'
+                ? 'border-emerald-500/50 shadow-emerald-500/20'
+                : activeGesture.gesture === 'PAN'
+                ? 'border-indigo-500/50 shadow-indigo-500/20'
+                : 'border-white/20'
+            }`}
+          >
+            <span
+              className={`text-2xl filter drop-shadow-md select-none ${
+                activeGesture.gesture === 'STOP' || activeGesture.gesture === 'NONE'
+                  ? 'animate-pulse'
+                  : 'animate-bounce'
+              }`}
+            >
               {activeGesture.symbol}
             </span>
-            <div className="font-extrabold text-sm tracking-wider uppercase text-emerald-300 select-none">
-              {activeGesture.actionText}
-            </div>
-            <div className="text-[10px] text-slate-300 font-mono tracking-wide">
-              {activeGesture.label}
+            <div className="flex flex-col text-left">
+              <div
+                className={`font-extrabold text-xs tracking-wider uppercase select-none ${
+                  activeGesture.gesture === 'STOP' || activeGesture.gesture === 'NONE'
+                    ? 'text-red-400'
+                    : activeGesture.gesture === 'ZOOM_IN'
+                    ? 'text-cyan-300'
+                    : activeGesture.gesture === 'ZOOM_OUT'
+                    ? 'text-blue-300'
+                    : activeGesture.gesture === 'ROTATE'
+                    ? 'text-emerald-300'
+                    : activeGesture.gesture === 'PAN'
+                    ? 'text-indigo-300'
+                    : activeGesture.gesture === 'SELECT'
+                    ? 'text-amber-300'
+                    : 'text-slate-200'
+                }`}
+              >
+                {activeGesture.actionText}
+              </div>
+              <div className="text-[10px] text-slate-400 font-mono tracking-wide">
+                {activeGesture.label}
+              </div>
             </div>
           </div>
         </div>
@@ -382,17 +481,37 @@ export const HandGestureWebcamPanel = ({
 
             {/* Gesture Status Card */}
             <div className="p-3 space-y-2 text-xs bg-white/70">
-              <div className="p-2 rounded-xl bg-slate-50 border border-slate-200/80">
+              <div
+                className={`p-2 rounded-xl border transition-all ${
+                  activeGesture.gesture === 'STOP' || activeGesture.gesture === 'NONE'
+                    ? 'bg-red-50/80 border-red-200'
+                    : activeGesture.gesture === 'ZOOM_IN'
+                    ? 'bg-cyan-50/80 border-cyan-200'
+                    : activeGesture.gesture === 'ZOOM_OUT'
+                    ? 'bg-blue-50/80 border-blue-200'
+                    : 'bg-slate-50 border-slate-200/80'
+                }`}
+              >
                 <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 block mb-0.5">
                   Detected Gesture:
                 </span>
                 <div className="flex items-center gap-2">
                   <span className="text-xl">{activeGesture.symbol}</span>
                   <div>
-                    <div className="font-extrabold text-slate-800 text-xs">
+                    <div
+                      className={`font-extrabold text-xs ${
+                        activeGesture.gesture === 'STOP' || activeGesture.gesture === 'NONE'
+                          ? 'text-red-700'
+                          : activeGesture.gesture === 'ZOOM_IN'
+                          ? 'text-cyan-700'
+                          : activeGesture.gesture === 'ZOOM_OUT'
+                          ? 'text-blue-700'
+                          : 'text-slate-800'
+                      }`}
+                    >
                       {activeGesture.actionText}
                     </div>
-                    <div className="text-[10px] text-slate-400 font-mono">
+                    <div className="text-[10px] text-slate-500 font-mono">
                       {activeGesture.label}
                     </div>
                   </div>
@@ -445,33 +564,41 @@ export const HandGestureWebcamPanel = ({
               </div>
 
               {/* Gesture Guide Cheatsheet */}
-              <div className="pt-1.5 border-t border-slate-100 text-[10px] text-slate-500 space-y-0.5">
-                <div className="flex items-center justify-between">
-                  <span>✋ Open Palm</span>
-                  <span className="font-semibold text-slate-700">Rotate</span>
+              <div className="pt-1.5 border-t border-slate-100 text-[10px] text-slate-500 space-y-1">
+                <div className="font-bold text-slate-700 text-[10px] uppercase tracking-wider mb-1 flex items-center justify-between">
+                  <span>Gesture Controls:</span>
+                  <span className="text-[9px] text-emerald-600 font-normal">Smoothed AI</span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span>🤏 Pinch</span>
-                  <span className="font-semibold text-slate-700">Zoom In/Out</span>
+                <div className="flex items-center justify-between py-0.5 px-1 rounded bg-red-50/50">
+                  <span className="text-red-700 font-medium">🛑 Fist / Exit</span>
+                  <span className="font-bold text-red-800">STOP 3D Model (Lock)</span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span>✌️ Two Fingers</span>
-                  <span className="font-semibold text-slate-700">Pan</span>
+                <div className="flex items-center justify-between py-0.5 px-1 rounded bg-cyan-50/50">
+                  <span className="text-cyan-800 font-medium">🤏 Tight Pinch</span>
+                  <span className="font-bold text-cyan-800">Zoom In (+)</span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span>✊ Closed Fist</span>
-                  <span className="font-semibold text-slate-700">Center Model</span>
+                <div className="flex items-center justify-between py-0.5 px-1 rounded bg-blue-50/50">
+                  <span className="text-blue-800 font-medium">👐 Open Pinch</span>
+                  <span className="font-bold text-blue-800">Zoom Out (-)</span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span>☝️ One Finger</span>
-                  <span className="font-semibold text-slate-700">Select Item</span>
+                <div className="flex items-center justify-between py-0.5 px-1">
+                  <span>🔄 Open Palm</span>
+                  <span className="font-semibold text-slate-700">Rotate 3D Model</span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span>👍 Thumbs Up</span>
-                  <span className="font-semibold text-slate-700">Overview</span>
+                <div className="flex items-center justify-between py-0.5 px-1">
+                  <span>↔️ Two Fingers</span>
+                  <span className="font-semibold text-slate-700">Pan Camera</span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span>🤙 Shaka</span>
+                <div className="flex items-center justify-between py-0.5 px-1">
+                  <span>🎯 One Finger</span>
+                  <span className="font-semibold text-slate-700">Inspect Item</span>
+                </div>
+                <div className="flex items-center justify-between py-0.5 px-1">
+                  <span>🏠 Thumbs Up</span>
+                  <span className="font-semibold text-slate-700">System Overview</span>
+                </div>
+                <div className="flex items-center justify-between py-0.5 px-1">
+                  <span>💥 Shaka</span>
                   <span className="font-semibold text-slate-700">Exploded View</span>
                 </div>
               </div>
